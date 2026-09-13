@@ -14,11 +14,16 @@
 //! length"); used to benchmark the heuristics, not for the free-tier hot path.
 
 use crate::error::SolveError;
-use crate::ffd::{best_fit_pack, check_max_bars, decreasing_instances};
+use crate::ffd::{best_fit_pack, decreasing_instances, StockPreference};
 use crate::model::{Problem, Solution};
 
 /// Solves `problem` to proven-optimal bar count (single stock length).
 pub fn solve_exact(problem: &Problem) -> Result<Solution, SolveError> {
+    if problem.stocks.len() != 1 {
+        return Err(SolveError::Unsupported(
+            "the exact solver supports a single stock length".to_string(),
+        ));
+    }
     problem.validate()?;
 
     let order = decreasing_instances(problem);
@@ -26,11 +31,11 @@ pub fn solve_exact(problem: &Problem) -> Result<Solution, SolveError> {
     let total: u64 = lengths.iter().map(|&l| u64::from(l)).sum();
 
     // Upper bound straight from the baseline heuristic.
-    let ffd_bars = best_fit_pack(problem, &order);
+    let ffd_bars = best_fit_pack(problem, &order, StockPreference::Smallest)?;
     let upper = ffd_bars.len();
 
     // Lower bound ignoring kerf (a relaxation, so it is admissible).
-    let usable = u64::from(problem.usable_length());
+    let usable = u64::from(problem.usable_length(0));
     let lower = ((total + usable - 1) / usable).max(1) as usize;
 
     let mut k = lower.min(upper);
@@ -44,19 +49,18 @@ pub fn solve_exact(problem: &Problem) -> Result<Solution, SolveError> {
     }
     let k = k.min(upper);
 
-    let bar_parts: Vec<Vec<usize>> = match packing {
+    let bar_parts: Vec<(usize, Vec<usize>)> = match packing {
         Some(assign) => {
             let mut bars: Vec<Vec<usize>> = vec![Vec::new(); k];
             for (instance, &part) in order.iter().enumerate() {
                 bars[assign[instance]].push(part);
             }
-            bars
+            bars.into_iter().map(|items| (0usize, items)).collect()
         }
         // `k == upper` and FFD itself is a witness packing for that k.
         None => ffd_bars,
     };
 
-    check_max_bars(problem, bar_parts.len() as u32)?;
     Ok(Solution::build(problem, bar_parts))
 }
 
@@ -64,7 +68,7 @@ pub fn solve_exact(problem: &Problem) -> Result<Solution, SolveError> {
 /// decreasing) fit into `k` bars? Returns the bar index per instance on
 /// success. Prunes bin-load symmetry and rejects items that fit nowhere.
 fn feasible(problem: &Problem, lengths: &[u32], k: usize) -> Option<Vec<usize>> {
-    let mut remaining = vec![problem.stock.length; k];
+    let mut remaining = vec![problem.stocks[0].length; k];
     let mut counts = vec![0u32; k];
     let mut assignment = vec![usize::MAX; lengths.len()];
 

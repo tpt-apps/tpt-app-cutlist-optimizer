@@ -14,14 +14,21 @@ crate-type = ["cdylib", "rlib"]
 [features]
 default = []
 # Pro edition (paid desktop build): enables the solver's improvement pass
-# (randomized restarts + local search). The free WASM build compiles without
-# it — `--no-default-features` is the default, `--features pro` is Pro.
-pro = ["tpt-cutlist-solver/improvement"]
+# (randomized restarts + local search), multi-stock/multi-material input,
+# the saved stock-set library, and print export. The free WASM build
+# compiles without it — default features are free, `--features pro` is Pro.
+pro = [
+    "tpt-cutlist-solver/improvement",
+    "dep:serde",
+    "dep:serde_json",
+]
 
 [dependencies]
 tpt-appfront-core = { path = "D:/Programming/1PRODUCTION/Open Source/tpt-appfront/crates/tpt-appfront-core" }
 tpt-appfront-dom = { path = "D:/Programming/1PRODUCTION/Open Source/tpt-appfront/crates/tpt-appfront-dom" }
 tpt-cutlist-solver = { path = "solver" }
+serde = { version = "1", features = ["derive"], optional = true }
+serde_json = { version = "1", optional = true }
 # Pinned to the installed wasm-bindgen CLI version — the CLI rejects wasm
 # built against a different schema version. Bump both together.
 wasm-bindgen = "=0.2.126"

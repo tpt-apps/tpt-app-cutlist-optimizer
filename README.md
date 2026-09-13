@@ -70,9 +70,29 @@ deploys the bundle to `<repo>\public\apps\cutlist-optimizer\` directly
 | `improvement`  | no      | randomized restarts + local search (Pro)           |
 | `exact`        | no      | branch-and-bound optimal solver for small jobs     |
 
-The app crate's `pro` feature maps to `tpt-cutlist-solver/improvement`; the
-free WASM bundle is built with default features, so the improvement pass is
-compiled out entirely.
+The app crate's `pro` feature maps to `tpt-cutlist-solver/improvement` plus
+serde (the stock-set library); the free WASM bundle is built with default
+features, so the improvement pass is compiled out entirely.
+
+## Free vs Pro
+
+| capability                        | Free        | Pro                              |
+| --------------------------------- | ----------- | -------------------------------- |
+| kerf/trim-aware 1D packing        | yes         | yes                              |
+| packing engine                    | BFD (both stock-order variants) | BFD + improvement search (200 ms budget) |
+| stock lengths per job             | 1           | unlimited, per-material          |
+| materials (`@tag` on part lines)  | —           | yes (materials never mix)        |
+| per-stock availability (`x n`)    | —           | yes (`max_bars` caps)            |
+| cost objective (per-bar price)    | implicit (length) | yes, shown in the summary  |
+| saved stock sets                  | —           | yes (localStorage/WebView2)      |
+| print-ready shop-floor layout     | —           | yes (`window.print()` sheet)     |
+
+## Pro input format
+
+Parts (one per line): `length x qty [label] [@material]`, e.g.
+`570 x 4 Side panel @ply`. Stocks (Pro, one per line):
+`length [x max-bars] [@material]`, e.g. `2400 x 4 @ply`. `#` comments are
+allowed in both.
 
 ## Solver guarantees (property-tested)
 

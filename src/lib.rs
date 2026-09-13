@@ -19,6 +19,10 @@ mod parse;
 #[cfg(target_arch = "wasm32")]
 mod app;
 
+// The saved stock-set library is a Pro feature and talks to web APIs.
+#[cfg(all(target_arch = "wasm32", feature = "pro"))]
+mod library;
+
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
 

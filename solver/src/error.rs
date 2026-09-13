@@ -18,6 +18,9 @@ pub enum SolveError {
     },
     /// A `max_bars` cap on the stock was set and the packing needs more.
     OutOfStock { needed: u32, available: u32 },
+    /// The requested strategy does not apply to this problem shape
+    /// (e.g. the exact solver only handles a single stock length).
+    Unsupported(String),
 }
 
 impl fmt::Display for SolveError {
@@ -48,6 +51,7 @@ impl fmt::Display for SolveError {
                 f,
                 "the job needs {needed} bars but only {available} are available"
             ),
+            SolveError::Unsupported(what) => write!(f, "unsupported: {what}"),
         }
     }
 }

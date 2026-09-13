@@ -3394,6 +3394,8 @@ name = "tpt-app-cutlist-optimizer"
 version = "0.1.0"
 dependencies = [
  "console_error_panic_hook",
+ "serde",
+ "serde_json",
  "tpt-appfront-core",
  "tpt-appfront-dom",
  "tpt-cutlist-solver",

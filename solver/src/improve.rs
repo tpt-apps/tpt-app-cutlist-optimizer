@@ -14,7 +14,9 @@
 use std::time::Instant;
 
 use crate::error::SolveError;
-use crate::ffd::{best_fit_pack, check_max_bars, decreasing_instances, OpenBar};
+use crate::ffd::{
+    best_fit_pack, best_of_preferences, decreasing_instances, packing_cost, OpenBar,
+};
 use crate::model::{Problem, Solution};
 
 /// Budget knobs for [`solve_optimized`].
@@ -38,15 +40,20 @@ impl Default for ImproveOptions {
 }
 
 /// Solves `problem` with the baseline plus the improvement pass.
+///
+/// The objective is total stock **price** (`Problem.stocks[i].price`); with
+/// default pricing this is total stock length used.
 pub fn solve_optimized(
     problem: &Problem,
     options: &ImproveOptions,
 ) -> Result<Solution, SolveError> {
+    use crate::ffd::StockPreference;
+
     problem.validate()?;
 
     let base_order = decreasing_instances(problem);
-    let mut best = best_fit_pack(problem, &base_order);
-    empty_bar_moves(problem, &mut best);
+    let mut best = best_of_preferences(problem, &base_order)?;
+    let mut best_cost = packing_cost(problem, &best);
 
     let mut rng = Rng::new(seed_problem(problem));
     for round in 0..options.rounds {
@@ -56,29 +63,36 @@ pub fn solve_optimized(
             }
         }
         let order = perturbed_order(problem, &base_order, &mut rng, round);
-        let mut candidate = best_fit_pack(problem, &order);
-        if candidate.len() < best.len() {
-            empty_bar_moves(problem, &mut candidate);
-            if candidate.len() < best.len() {
-                best = candidate;
+        for preference in [StockPreference::Smallest, StockPreference::Largest] {
+            // A candidate can be infeasible under a `max_bars` cap; skip it.
+            let Ok(mut candidate) = best_fit_pack(problem, &order, preference) else {
+                continue;
+            };
+            if packing_cost(problem, &candidate) < best_cost {
+                empty_bar_moves(problem, &mut candidate);
+                let candidate_cost = packing_cost(problem, &candidate);
+                if candidate_cost < best_cost {
+                    best = candidate;
+                    best_cost = candidate_cost;
+                }
             }
         }
     }
 
-    check_max_bars(problem, best.len() as u32)?;
     Ok(Solution::build(problem, best))
 }
 
 /// First-improvement local search: repeatedly scan the bars (fewest cuts
-/// first) and try to relocate every cut of one bar into the remaining bars.
-/// Committing such a move removes a bar outright. Runs until a full scan
-/// finds no improvement. Deterministic.
-fn empty_bar_moves(problem: &Problem, bars: &mut Vec<Vec<usize>>) {
+/// first) and try to relocate every cut of one bar into the remaining bars
+/// of the same material. Committing such a move removes a bar outright and
+/// therefore strictly reduces total cost by that bar's price. Runs until a
+/// full scan finds no improvement. Deterministic.
+fn empty_bar_moves(problem: &Problem, bars: &mut Vec<(usize, Vec<usize>)>) {
     loop {
         let mut improved = false;
         // Try the most promising bars first: fewest cuts to relocate.
         let mut order: Vec<usize> = (0..bars.len()).collect();
-        order.sort_by_key(|&i| bars[i].len());
+        order.sort_by_key(|&i| bars[i].1.len());
         for &source in &order {
             if bars.len() <= 1 {
                 break;
@@ -95,28 +109,35 @@ fn empty_bar_moves(problem: &Problem, bars: &mut Vec<Vec<usize>>) {
     }
 }
 
-/// Attempts to dissolve `bars[source]` into the other bars. Returns the new
-/// bar lists on success (source removed), `None` when some cut does not fit
-/// anywhere else.
+/// Attempts to dissolve `bars[source]` into the other bars of the same
+/// material. Returns the new bar list on success (source removed), `None`
+/// when some cut does not fit anywhere else. Bar order is preserved.
 fn try_empty_bar(
     problem: &Problem,
-    bars: &[Vec<usize>],
+    bars: &[(usize, Vec<usize>)],
     source: usize,
-) -> Option<Vec<Vec<usize>>> {
-    let mut open: Vec<OpenBar> = Vec::with_capacity(bars.len() - 1);
-    for (index, items) in bars.iter().enumerate() {
+) -> Option<Vec<(usize, Vec<usize>)>> {
+    let source_material = problem.stocks[bars[source].0].material;
+
+    let mut open: Vec<OpenBar> = Vec::new();
+    let mut target_positions: Vec<usize> = Vec::new(); // indexes into `bars`
+    for (index, (stock_index, items)) in bars.iter().enumerate() {
         if index == source {
             continue;
         }
-        let mut bar = OpenBar::new();
+        if problem.stocks[*stock_index].material != source_material {
+            continue;
+        }
+        let mut bar = OpenBar::new(*stock_index);
         for &part in items {
             bar.add(part, problem.parts[part].length);
         }
         open.push(bar);
+        target_positions.push(index);
     }
 
     // Relocate the source's cuts longest-first (kerf-aware best fit).
-    let mut relocating: Vec<usize> = bars[source].clone();
+    let mut relocating: Vec<usize> = bars[source].1.clone();
     relocating.sort_by(|&a, &b| problem.parts[b].length.cmp(&problem.parts[a].length));
     for part in relocating {
         let length = problem.parts[part].length;
@@ -132,7 +153,23 @@ fn try_empty_bar(
         open[bar_index].add(part, length);
     }
 
-    Some(open.into_iter().map(|bar| bar.items).collect())
+    // Rebuild in the original order: same-material bars take their updated
+    // item lists, everything else (and the dissolved source) is dropped.
+    let mut open_iter = open.into_iter();
+    Some(
+        bars.iter()
+            .enumerate()
+            .filter(|(index, _)| *index != source)
+            .map(|(index, (stock_index, items))| {
+                if target_positions.contains(&index) {
+                    let bar = open_iter.next().expect("one open bar per target");
+                    (bar.stock_index, bar.items)
+                } else {
+                    (*stock_index, items.clone())
+                }
+            })
+            .collect(),
+    )
 }
 
 /// Builds a randomized ordering for a restart round. Even rounds rotate the
@@ -200,16 +237,21 @@ impl Rng {
     }
 }
 
-/// FNV-1a over the problem's numeric identity: lengths, quantities, stock,
-/// kerf and trim. Same problem in, same seed out — deterministic across runs
-/// and platforms.
+/// FNV-1a over the problem's numeric identity: lengths, quantities, stock
+/// specs, kerf and trim. Same problem in, same seed out — deterministic
+/// across runs and platforms.
 fn seed_problem(problem: &Problem) -> u64 {
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
     for part in &problem.parts {
         mix(&mut hash, &part.length.to_le_bytes());
         mix(&mut hash, &part.qty.to_le_bytes());
+        mix(&mut hash, &part.material.to_le_bytes());
     }
-    mix(&mut hash, &problem.stock.length.to_le_bytes());
+    for stock in &problem.stocks {
+        mix(&mut hash, &stock.length.to_le_bytes());
+        mix(&mut hash, &stock.price.to_le_bytes());
+        mix(&mut hash, &stock.material.to_le_bytes());
+    }
     mix(&mut hash, &problem.kerf.to_le_bytes());
     mix(&mut hash, &problem.trim.to_le_bytes());
     hash

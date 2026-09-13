@@ -12,40 +12,72 @@
 //! A bar with `n` cuts therefore consumes
 //! `sum(part lengths) + (n-1) * kerf + trim` and its waste is
 //! `stock_length - consumed`.
+//!
+//! Materials and multiple stocks (Pro edition): parts and stocks carry a
+//! `material` id; a part may only be cut from stock of the same id. A
+//! `Problem` holds any number of stock specs (the free edition passes
+//! exactly one). The packing objective is minimum total stock **price**
+//! (`StockSpec::price`, which defaults to the stock's length — i.e.
+//! "use as little material as possible").
 
 use crate::error::SolveError;
 
 /// A requested part: `qty` pieces of `length`, each worth a human label.
+/// `material` restricts which stock the piece may be cut from.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Part {
     pub length: u32,
     pub qty: u32,
     pub label: String,
+    pub material: usize,
 }
 
 impl Part {
+    /// A part of the default material (id 0).
     pub fn new(length: u32, qty: u32, label: impl Into<String>) -> Self {
         Part {
             length,
             qty,
             label: label.into(),
+            material: 0,
+        }
+    }
+
+    /// A part of a specific material.
+    pub fn with_material(
+        length: u32,
+        qty: u32,
+        label: impl Into<String>,
+        material: usize,
+    ) -> Self {
+        Part {
+            length,
+            qty,
+            label: label.into(),
+            material,
         }
     }
 }
 
-/// The stock the parts are cut from. `max_bars` optionally caps how many
-/// bars may be used (e.g. "I only have 5 sheets of this").
+/// One purchasable stock: `length` bars of one `material`, at `price` per
+/// bar, optionally capped at `max_bars` bars. The default price is the
+/// stock's length, so "cheapest packing" degenerates to "least material".
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StockSpec {
     pub length: u32,
     pub max_bars: Option<u32>,
+    pub material: usize,
+    pub price: u64,
 }
 
 impl StockSpec {
+    /// Stock of the default material (id 0), priced by its length.
     pub fn new(length: u32) -> Self {
         StockSpec {
             length,
             max_bars: None,
+            material: 0,
+            price: u64::from(length),
         }
     }
 
@@ -53,15 +85,35 @@ impl StockSpec {
         StockSpec {
             length,
             max_bars: Some(max_bars),
+            material: 0,
+            price: u64::from(length),
         }
+    }
+
+    /// Builder: set the material id.
+    pub fn material(mut self, material: usize) -> Self {
+        self.material = material;
+        self
+    }
+
+    /// Builder: set the per-bar price.
+    pub fn price(mut self, price: u64) -> Self {
+        self.price = price;
+        self
+    }
+
+    /// Builder: cap the number of usable bars.
+    pub fn max_bars(mut self, max_bars: u32) -> Self {
+        self.max_bars = Some(max_bars);
+        self
     }
 }
 
-/// A complete optimization problem.
+/// A complete optimization problem over one or more stock specs.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Problem {
     pub parts: Vec<Part>,
-    pub stock: StockSpec,
+    pub stocks: Vec<StockSpec>,
     /// Blade / saw kerf width removed between consecutive cuts.
     pub kerf: u32,
     /// Fixed end-of-bar trim loss charged once per used bar.
@@ -69,13 +121,19 @@ pub struct Problem {
 }
 
 impl Problem {
-    pub fn new(parts: Vec<Part>, stock: StockSpec, kerf: u32, trim: u32) -> Self {
+    /// A multi-stock problem.
+    pub fn new(parts: Vec<Part>, stocks: Vec<StockSpec>, kerf: u32, trim: u32) -> Self {
         Problem {
             parts,
-            stock,
+            stocks,
             kerf,
             trim,
         }
+    }
+
+    /// Convenience for the single-stock case (free edition).
+    pub fn single(parts: Vec<Part>, stock: StockSpec, kerf: u32, trim: u32) -> Self {
+        Problem::new(parts, vec![stock], kerf, trim)
     }
 
     /// Total number of part instances (sum of quantities).
@@ -91,23 +149,37 @@ impl Problem {
             .sum()
     }
 
-    /// Usable capacity of one bar once the end trim is paid.
-    pub fn usable_length(&self) -> u32 {
-        self.stock.length.saturating_sub(self.trim)
+    /// Usable capacity of one bar of `stock_index` once the end trim is paid.
+    pub fn usable_length(&self, stock_index: usize) -> u32 {
+        self.stocks[stock_index].length.saturating_sub(self.trim)
     }
 
     /// Rejects malformed problems up front so every solver variant can
     /// assume well-formed input and the UI can show a precise message.
     pub fn validate(&self) -> Result<(), SolveError> {
-        if self.stock.length == 0 {
+        if self.stocks.is_empty() {
             return Err(SolveError::InvalidProblem(
-                "stock length must be greater than zero".to_string(),
+                "the job has no stock to cut from".to_string(),
             ));
         }
-        if self.trim >= self.stock.length {
-            return Err(SolveError::InvalidProblem(
-                "trim must be smaller than the stock length".to_string(),
-            ));
+        for (index, stock) in self.stocks.iter().enumerate() {
+            if stock.length == 0 {
+                return Err(SolveError::InvalidProblem(format!(
+                    "stock {} has zero length",
+                    index + 1
+                )));
+            }
+            if self.trim >= stock.length {
+                return Err(SolveError::InvalidProblem(
+                    "trim must be smaller than the stock length".to_string(),
+                ));
+            }
+            if stock.max_bars == Some(0) {
+                return Err(SolveError::InvalidProblem(format!(
+                    "stock {} allows zero bars; remove it instead",
+                    index + 1
+                )));
+            }
         }
         if self.parts.is_empty() {
             return Err(SolveError::InvalidProblem(
@@ -129,13 +201,24 @@ impl Problem {
                     part.label
                 )));
             }
-            if part.length + self.trim > self.stock.length {
+            // The piece must fit at least one stock of its own material.
+            let fits = self.stocks.iter().any(|stock| {
+                stock.material == part.material && part.length + self.trim <= stock.length
+            });
+            if !fits {
+                let longest = self
+                    .stocks
+                    .iter()
+                    .filter(|stock| stock.material == part.material)
+                    .map(|stock| stock.length)
+                    .max()
+                    .unwrap_or(0);
                 return Err(SolveError::PartTooLong {
                     index,
                     label: part.label.clone(),
                     length: part.length,
-                    stock_length: self.stock.length,
-                    available: self.stock.length - self.trim,
+                    stock_length: longest,
+                    available: longest.saturating_sub(self.trim),
                 });
             }
         }
@@ -153,15 +236,23 @@ pub struct Cut {
     pub offset: u32,
 }
 
-/// A single stock length with the cuts placed on it.
+/// A single stock length with the cuts placed on it. `stock_index` points
+/// into `Problem::stocks` — with multiple stocks, bars can differ in length
+/// (and material).
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Bar {
+    pub stock_index: usize,
     pub cuts: Vec<Cut>,
 }
 
 impl Bar {
     pub fn cut_count(&self) -> usize {
         self.cuts.len()
+    }
+
+    /// Stock length of this bar (lookup through the problem).
+    pub fn stock_length(&self, problem: &Problem) -> u32 {
+        problem.stocks[self.stock_index].length
     }
 
     /// Sum of the placed part lengths (excluding kerf and trim).
@@ -205,19 +296,24 @@ impl Bar {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Solution {
     pub bars: Vec<Bar>,
-    /// Total offcut across all bars (`bars * stock - parts - kerf - trim`).
+    /// Total offcut across all bars (`sum(stock lengths) - parts - kerf - trim`).
     pub waste: u32,
-    /// `parts_length / (bars * stock_length)` as a fraction in `0.0..=1.0`.
+    /// Sum of the per-bar stock prices — the packing objective.
+    pub cost: u64,
+    /// `parts_length / sum(stock lengths)` as a fraction in `0.0..=1.0`.
     pub utilization: f64,
 }
 
 impl Solution {
-    /// Assembles a [`Solution`] from per-bar lists of part indices,
-    /// computing kerf-aware offsets, total waste and utilization.
-    pub fn build(problem: &Problem, bar_parts: Vec<Vec<usize>>) -> Solution {
-        let mut bars = Vec::with_capacity(bar_parts.len());
-        for parts_in_bar in bar_parts {
-            let mut bar = Bar::default();
+    /// Assembles a [`Solution`] from per-bar `(stock_index, part indices)`
+    /// groups, computing kerf-aware offsets, waste, cost and utilization.
+    pub fn build(problem: &Problem, bar_groups: Vec<(usize, Vec<usize>)>) -> Solution {
+        let mut bars = Vec::with_capacity(bar_groups.len());
+        for (stock_index, parts_in_bar) in bar_groups {
+            let mut bar = Bar {
+                stock_index,
+                cuts: Vec::new(),
+            };
             let mut offset = 0u32;
             for (i, part_index) in parts_in_bar.into_iter().enumerate() {
                 let length = problem.parts[part_index].length;
@@ -235,21 +331,25 @@ impl Solution {
             bars.push(bar);
         }
 
-        let stock = problem.stock.length;
-        let total_stock = (bars.len() as u64) * (stock as u64);
         let parts_total: u64 = bars.iter().map(|b| b.parts_length() as u64).sum();
-        let waste_total: u64 = bars
-            .iter()
-            .map(|b| b.waste(stock, problem.kerf, problem.trim) as u64)
-            .sum();
-        let utilization = if total_stock == 0 {
+        let mut stock_total: u64 = 0;
+        let mut waste_total: u64 = 0;
+        let mut cost_total: u64 = 0;
+        for bar in &bars {
+            let stock = &problem.stocks[bar.stock_index];
+            stock_total += u64::from(stock.length);
+            waste_total += u64::from(bar.waste(stock.length, problem.kerf, problem.trim));
+            cost_total += stock.price;
+        }
+        let utilization = if stock_total == 0 {
             0.0
         } else {
-            parts_total as f64 / total_stock as f64
+            parts_total as f64 / stock_total as f64
         };
         Solution {
             bars,
             waste: waste_total.min(u32::MAX as u64) as u32,
+            cost: cost_total,
             utilization,
         }
     }

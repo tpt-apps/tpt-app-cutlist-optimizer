@@ -13,10 +13,12 @@
 > mounts into the `#tpt-appfront-root` marker div instead — never `document.body` —
 > so the two hosts never double-mount.
 >
-> **Status 2026-09-13:** Phases 0–2 complete and verified (`just test` green,
-> free bundle 73.9 KB gz, pro bundle 77.8 KB gz, desktop exe builds).
-> Remaining items are blocked on the web repo / Gumroad (not on this machine)
-> or are Pro-edition UI scope (multi-material, library, print export).
+> **Status 2026-09-13:** Phases 0–2 complete and verified; Phase 3's
+> multi-material solver + UI, stock-set library and print export are done
+> (free bundle 75.7 KB gz, pro bundle 98.7 KB gz, desktop exe builds).
+> Remaining items are blocked on the web repo / Gumroad (not on this machine),
+> exe-side JSON persistence (needs a request/response IPC in appfront-webview),
+> and the interactive desktop smoke test.
 
 ## Phase 0 — Scaffold & pipeline proof
 - [x] `tpt-appfront init tpt-app-cutlist-optimizer --target dom` (path deps on the tpt-appfront checkout)
@@ -30,7 +32,8 @@
 Separate `solver/` crate in this repo, `no_std`-friendly pure Rust, zero UI deps —
 shared verbatim by the WASM and desktop editions and unit-testable on the host.
 
-- [x] Domain types: `Part` (length, qty, label), `StockSpec` (length, optional max bars), `Problem { parts, stock, kerf, trim }`, `Solution { bars, waste, utilization }`
+- [x] Domain types: `Part` (length, qty, label, material), `StockSpec` (length, optional max bars, material, price), `Problem { parts, stocks, kerf, trim }` (one or more stocks — the free edition passes one), `Solution { bars, waste, cost, utilization }`
+- [x] Multi-stock + materials (Pro): material isolation (a part never lands on foreign stock), per-stock `max_bars` caps (enforced during packing with a clear `OutOfStock`), price objective with smallest/largest-stock packing variants, cheaper-feasible-wins
 - [x] Feasibility & accounting: kerf-aware used-length accounting (`parts + (n-1)*kerf + trim <= stock`), trim loss per bar, per-part placement records (`Cut { part, length, offset }`)
 - [x] Baseline: best-fit-decreasing 1D packing (deterministic, kerf-aware)
 - [x] Improvement pass (feature `improvement`): repeated FFD with seeded rotated/jittered orderings + Fisher-Yates shuffles, first-improvement empty-bar local search (deterministic rounds + optional `Instant` deadline, e.g. 200 ms budget in the Pro app)
@@ -49,9 +52,13 @@ shared verbatim by the WASM and desktop editions and unit-testable on the host.
 
 ## Phase 3 — Paid desktop edition (cargo feature `pro`)
 - [x] `pro` feature gates the improvement optimizer through `tpt-cutlist-solver/improvement` (200 ms budget); the free build compiles it out entirely
-- [ ] `pro` UI scope: multi-stock/multi-material jobs, material library (persisted JSON next to the exe), print-ready layout export (HTML → print dialog, or embedded PDF via `printpdf` if trivial) — the solver is structured to extend; UI not started
+- [x] Multi-stock / multi-material optimization: `Problem` holds any number of `StockSpec`s; parts and stocks carry material ids (a part never mixes materials); per-stock `max_bars` caps; objective = minimum total stock price (defaults to stock length). Packer opens new bars on the smallest adequate stock, and the solver also packs a largest-first variant and keeps the cheaper one; the improvement pass dissolves whole bars across stock lengths (cost-decreasing, material-safe)
+- [x] Pro UI: stock textarea (`2400 x 4 @ply` per line), `@material` tags on part lines, inline validation (no stock for material, part longer than every matching stock, bad line syntax), per-bar material in the diagram headers and a Material column in the placement table, total cost in the summary
+- [x] Saved stock-set library: named sets (stocks + kerf) persisted to localStorage — survives restarts in the desktop WebView2 profile; Load/Delete per set, Save from the live fields
+- [x] Print-ready layout export: "Print layout" button renders a print-only shop-floor sheet (per-bar diagrams + placement table + totals) via `window.print()` and a print stylesheet; works in the WebView2 shell
+- [ ] Material library persisted to a JSON file **next to the exe** (currently profile storage; needs a request/response IPC addition to appfront-webview — app commands are fire-and-forget today)
 - [x] Desktop shell via `tpt-appfront-webview` (wry/tao) hosting the same DOM bundle: `desktop/` bin (`tpt-cutlist-optimizer-pro`) serves `dist/` (dist resolution: `TPT_CUTLIST_DIST` → `./dist` → exe-adjacent); `build.ps1 -Pro` = pro wasm + `trunk build --release --features pro` + exe
-- [x] Windows exe build verified: `target/release/tpt-cutlist-optimizer-pro.exe` compiles and exits with a clear message when `dist/index.html` is missing. (Interactive smoke test — open window, run sample job, check the Pro engine note, export layout — still to do in a desktop session)
+- [x] Windows exe build verified: `target/release/tpt-cutlist-optimizer-pro.exe` compiles and exits with a clear message when `dist/index.html` is missing. (Interactive smoke test — open window, run sample job, check the Pro engine note, print — still to do in a desktop session)
 - [ ] Gumroad: create product from apps.md listing copy ($49), upload exe, paste URL into `gumroadUrl` in the hub registry
 
 ## Phase 4 — Ship & measure

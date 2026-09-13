@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 use tpt_cutlist_solver::{Part, Problem, SolveError, Solution, StockSpec};
 
 fn problem(parts: Vec<(&str, u32, u32)>, stock: u32, kerf: u32, trim: u32) -> Problem {
-    Problem::new(
+    Problem::single(
         parts
             .into_iter()
             .map(|(label, length, qty)| Part::new(length, qty, label))
@@ -19,15 +19,16 @@ fn problem(parts: Vec<(&str, u32, u32)>, stock: u32, kerf: u32, trim: u32) -> Pr
 }
 
 /// Core invariant check shared by all property tests: no bar overfilled,
-/// offsets consistent (kerf-aware), every requested part placed exactly once.
+/// offsets consistent (kerf-aware), every requested part placed exactly once,
+/// and the cost/waste/utilization fields agree with the bars.
 fn assert_valid(problem: &Problem, solution: &Solution) {
     // 1. No bar is overfilled (kerf + trim aware) and none is empty.
     for (index, bar) in solution.bars.iter().enumerate() {
+        let stock_length = problem.stocks[bar.stock_index].length;
         let consumed = bar.consumed(problem.kerf, problem.trim);
         assert!(
-            consumed <= problem.stock.length,
-            "bar {index} overfilled: {consumed} > {} (cuts: {:?})",
-            problem.stock.length,
+            consumed <= stock_length,
+            "bar {index} overfilled: {consumed} > {stock_length} (cuts: {:?})",
             bar.cuts
         );
         assert!(!bar.cuts.is_empty(), "solution contains an empty bar");
@@ -41,15 +42,19 @@ fn assert_valid(problem: &Problem, solution: &Solution) {
         assert_eq!(bar.cuts[0].offset, 0, "first cut must start at 0");
     }
 
-    // 2. Every requested part placed exactly once, cut lengths matching.
+    // 2. Every requested part placed exactly once, cut lengths matching,
+    //    and every cut on a bar of its own material.
     let mut placed: BTreeMap<usize, u32> = BTreeMap::new();
     for bar in &solution.bars {
+        let bar_material = problem.stocks[bar.stock_index].material;
         for cut in &bar.cuts {
             *placed.entry(cut.part).or_insert(0) += 1;
+            let part = &problem.parts[cut.part];
+            assert_eq!(part.length, cut.length, "cut length does not match its part");
             assert_eq!(
-                problem.parts[cut.part].length,
-                cut.length,
-                "cut length does not match its part"
+                part.material, bar_material,
+                "part {} cut from foreign material",
+                cut.part
             );
         }
     }
@@ -63,18 +68,23 @@ fn assert_valid(problem: &Problem, solution: &Solution) {
     }
 
     // 3. Accounting fields agree with the bars.
-    let stock_total = solution.bar_count() as u64 * problem.stock.length as u64;
+    let mut stock_total: u64 = 0;
+    let mut kerf_total: u64 = 0;
+    let mut trim_total: u64 = 0;
+    let mut cost_total: u64 = 0;
+    for bar in &solution.bars {
+        let stock = &problem.stocks[bar.stock_index];
+        stock_total += u64::from(stock.length);
+        kerf_total += u64::from(bar.kerf_length(problem.kerf));
+        trim_total += u64::from(problem.trim);
+        cost_total += stock.price;
+    }
     let parts_total = solution.parts_length() as u64;
-    let kerf_total: u64 = solution
-        .bars
-        .iter()
-        .map(|b| u64::from(b.kerf_length(problem.kerf)))
-        .sum();
-    let trim_total = solution.bar_count() as u64 * u64::from(problem.trim);
     assert_eq!(
         u64::from(solution.waste),
         stock_total - parts_total - kerf_total - trim_total
     );
+    assert_eq!(solution.cost, cost_total);
     let expected_utilization = parts_total as f64 / stock_total as f64;
     assert!((solution.utilization - expected_utilization).abs() < 1e-9);
 }
@@ -204,7 +214,7 @@ fn zero_length_and_zero_qty_are_rejected() {
 fn max_bars_cap_is_enforced() {
     // 2 x 1300 needs 2 bars; cap it at 1 -> OutOfStock.
     let mut job = problem(vec![("shelf", 1300, 2)], 2400, 0, 0);
-    job.stock.max_bars = Some(1);
+    job.stocks[0].max_bars = Some(1);
     assert!(matches!(
         tpt_cutlist_solver::solve(&job),
         Err(SolveError::OutOfStock {
@@ -212,6 +222,139 @@ fn max_bars_cap_is_enforced() {
             available: 1
         })
     ));
+}
+
+// ---------------------------------------------------------------------------
+// Multi-stock and materials (Pro)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn smallest_adequate_stock_is_chosen() {
+    // One 1000 part, stocks 1200 and 2400: the smaller (cheaper) stock wins.
+    let job = Problem::new(
+        vec![Part::new(1000, 1, "shelf")],
+        vec![StockSpec::new(2400), StockSpec::new(1200)],
+        0,
+        0,
+    );
+    let solution = tpt_cutlist_solver::solve(&job).expect("solves");
+    assert_valid(&job, &solution);
+    assert_eq!(solution.bar_count(), 1);
+    assert_eq!(solution.bars[0].stock_index, 1, "must use the 1200 stock");
+    assert_eq!(solution.cost, 1200);
+}
+
+#[test]
+fn materials_never_mix() {
+    // Parts tagged with two materials, one stock per material: every cut
+    // must land on its own material's stock.
+    let job = Problem::new(
+        vec![
+            Part::with_material(600, 2, "ply shelf", 0),
+            Part::with_material(600, 3, "pine shelf", 1),
+        ],
+        vec![
+            StockSpec::new(2400).material(0),
+            StockSpec::new(1800).material(1),
+        ],
+        3,
+        0,
+    );
+    let solution = tpt_cutlist_solver::solve(&job).expect("solves");
+    assert_valid(&job, &solution);
+    let ply_bars = solution
+        .bars
+        .iter()
+        .filter(|bar| bar.stock_index == 0)
+        .count();
+    let pine_bars = solution
+        .bars
+        .iter()
+        .filter(|bar| bar.stock_index == 1)
+        .count();
+    assert_eq!(ply_bars, 1, "2 x 600 fits one 2400 ply bar");
+    assert_eq!(pine_bars, 2, "3 x 600 needs two 1800 pine bars");
+}
+
+#[test]
+fn per_stock_max_bars_is_enforced() {
+    // Material 1 needs 2 bars of its 1200 stock, but only 1 is available.
+    let job = Problem::new(
+        vec![Part::with_material(1000, 2, "shelf", 1)],
+        vec![
+            StockSpec::new(2400).material(0),
+            StockSpec::new(1200).max_bars(1).material(1),
+        ],
+        0,
+        0,
+    );
+    assert!(matches!(
+        tpt_cutlist_solver::solve(&job),
+        Err(SolveError::OutOfStock {
+            needed: 2,
+            available: 1
+        })
+    ));
+}
+
+#[test]
+fn part_without_matching_stock_is_rejected() {
+    // Material 7 has no stock at all.
+    let job = Problem::new(
+        vec![Part::with_material(600, 1, "mystery", 7)],
+        vec![StockSpec::new(2400)],
+        0,
+        0,
+    );
+    assert!(matches!(
+        tpt_cutlist_solver::solve(&job),
+        Err(SolveError::PartTooLong { stock_length: 0, .. })
+    ));
+}
+
+#[test]
+fn custom_price_is_honored_in_the_objective() {
+    // 2 x 900 parts against stocks [1900 @ 1900, 1000 @ 600]: each 900 fits
+    // a 1000 bar but two do not fit one bar, so the packing is two 1000
+    // bars (cost 2 x 600 = 1200) rather than anything on the 1900 stock.
+    let job = Problem::new(
+        vec![Part::new(900, 2, "rail")],
+        vec![StockSpec::new(1900).price(1900), StockSpec::new(1000).price(600)],
+        0,
+        0,
+    );
+    let solution = tpt_cutlist_solver::solve(&job).expect("solves");
+    assert_valid(&job, &solution);
+    assert_eq!(solution.cost, 1200);
+    assert!(solution.bars.iter().all(|bar| bar.stock_index == 1));
+}
+
+#[cfg(feature = "improvement")]
+#[test]
+fn improvement_prefers_the_cheaper_multi_stock_packing() {
+    // 2 x 1100 + 2 x 1150 against [1300, 2400]: smallest-first greedy opens
+    // a 1300 bar per piece (4 bars, cost 4 x 1300 = 5200) — the improvement
+    // pass pairs pieces on 2400 bars (1100 + 1150 + kerf 3 = 2253 <= 2400),
+    // giving 2 bars at cost 2 x 2400 = 4800.
+    let job = Problem::new(
+        vec![Part::new(1100, 2, "a"), Part::new(1150, 2, "b")],
+        vec![StockSpec::new(1300), StockSpec::new(2400)],
+        3,
+        0,
+    );
+    let baseline = tpt_cutlist_solver::solve(&job).expect("solves");
+    let improved =
+        tpt_cutlist_solver::solve_optimized(&job, &tpt_cutlist_solver::ImproveOptions::default())
+            .expect("solves");
+    assert_valid(&job, &baseline);
+    assert_valid(&job, &improved);
+    assert!(
+        improved.cost <= baseline.cost,
+        "improved cost {} must not exceed baseline cost {}",
+        improved.cost,
+        baseline.cost
+    );
+    assert_eq!(improved.cost, 4800, "pairs on 2400 bars are optimal");
 }
 
 // ---------------------------------------------------------------------------
@@ -380,7 +523,7 @@ mod property {
             .zip(qtys)
             .map(|(length, qty)| Part::new(length % stock.max(2) + 1, qty % 4 + 1, "part"))
             .collect();
-        Problem::new(parts, StockSpec::new(stock), kerf, 0)
+        Problem::new(parts, vec![StockSpec::new(stock)], kerf, 0)
     }
 
     proptest! {
