@@ -1,15 +1,18 @@
 //! TPT Cut List Optimizer Pro — desktop shell (paid edition).
 //!
 //! A native host binary that opens the OS webview (WebView2 on Windows) and
-//! serves the `trunk build --release` output of the appfront DOM bundle from
-//! `dist/`. The same DOM bundle ships to the hub for the free WASM edition;
-//! the Pro difference at runtime is that the bundle is built with
-//! `--features pro`, which compiles the solver's improvement pass in.
+//! serves the `trunk build --release --features pro` output of the appfront
+//! DOM bundle from `dist\desktop`. The same DOM bundle ships to the hub for
+//! the free WASM edition; the Pro difference at runtime is that the bundle
+//! is built with `--features pro`, which compiles the solver's improvement
+//! pass in.
 //!
 //! Resolve order for the bundle directory:
 //! 1. `TPT_CUTLIST_DIST` environment variable,
-//! 2. `./dist` next to the current working directory,
-//! 3. `dist` next to the executable.
+//! 2. `dist\desktop` next to the current working directory (the pipeline's
+//!    trunk output),
+//! 3. `dist` next to the current working directory (legacy layout),
+//! 4. `dist` next to the executable (portable package layout).
 
 use std::path::PathBuf;
 
@@ -22,7 +25,7 @@ fn main() {
     if !dist_dir.join("index.html").exists() {
         eprintln!(
             "tpt-cutlist-optimizer-pro: no index.html under {} — run \
-             `trunk build --release` first (or set TPT_CUTLIST_DIST)",
+             `./build.ps1 -Pro` first (or set TPT_CUTLIST_DIST)",
             dist_dir.display()
         );
         std::process::exit(1);
@@ -49,17 +52,18 @@ fn resolve_dist_dir() -> PathBuf {
     if let Ok(from_env) = std::env::var("TPT_CUTLIST_DIST") {
         return PathBuf::from(from_env);
     }
-    let cwd_dist = PathBuf::from("dist");
-    if cwd_dist.join("index.html").exists() {
-        return cwd_dist;
-    }
+    let mut candidates = vec![
+        PathBuf::from("dist").join("desktop"),
+        PathBuf::from("dist"),
+    ];
     if let Ok(exe) = std::env::current_exe() {
         if let Some(exe_dir) = exe.parent() {
-            let exe_dist = exe_dir.join("dist");
-            if exe_dist.join("index.html").exists() {
-                return exe_dist;
-            }
+            candidates.push(exe_dir.join("dist"));
         }
     }
-    cwd_dist
+    candidates
+        .into_iter()
+        .find(|dir| dir.join("index.html").exists())
+        .unwrap_or_else(|| PathBuf::from("dist").join("desktop"))
 }
+

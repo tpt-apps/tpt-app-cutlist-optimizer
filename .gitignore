@@ -1,5 +1,7 @@
 /target
 /dist
+/release
 /_*.txt
 # Apps commit their lockfile (reproducible releases); only libraries omit it.
 
+/Pro

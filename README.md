@@ -48,19 +48,60 @@ as `cutlist-optimizer_bg.wasm` (resolved via `import.meta.url`). Standalone
 `trunk serve` mounts into the `#tpt-appfront-root` marker div instead — never
 `document.body` — so the two hosts never double-mount.
 
+## Outputs (never overwrite each other)
+
+```
+dist\hub\      free wasm bundle for the website
+               (cutlist-optimizer.js + cutlist-optimizer_bg.wasm)
+dist\desktop\  trunk bundle the Pro exe serves
+release\TPT Cut List Optimizer Pro\   staged, upload-ready exe package
+release\TPT-Cut-List-Optimizer-Pro.zip   the same, zipped for Gumroad
+```
+
 ## Commands
 
 ```pwsh
-just build        # free wasm bundle -> dist\web (+ gzip size report)
-just pro          # pro wasm + trunk bundle + desktop exe
+just build        # free bundle -> dist\hub (+ gzip size report)
+just pro          # pro wasm + dist\desktop + exe + staged zip in release\
+just deploy       # copy dist\hub into the web repo (set TPT_WEB_REPO first)
 just test         # solver (default + all features) + parser tests
 just check        # type-check wasm (free + pro) and the desktop shell
 just dev          # trunk serve (standalone page)
 ```
 
-Set `TPT_WEB_REPO` to the tptsolutions.co.nz web repo path and `build.ps1`
-deploys the bundle to `<repo>\public\apps\cutlist-optimizer\` directly
-(the glue is generated with the right name via `wasm-bindgen --out-name`).
+## Uploading to the website
+
+```pwsh
+# one-time per session: point at the web repo checkout
+$env:TPT_WEB_REPO = "C:\path\to\the\web-repo"
+
+just build        # or: just deploy to copy without rebuilding
+```
+
+`build.ps1` copies `cutlist-optimizer.js` + `cutlist-optimizer_bg.wasm` into
+`<web-repo>\public\apps\cutlist-optimizer\`. Then in the web repo, set the
+app's registry entry:
+
+```
+status: 'live'
+wasm: { entry: '/apps/cutlist-optimizer/cutlist-optimizer.js' }
+```
+
+The hub's `WasmAppRunner` dynamic-imports that glue, awaits the default init,
+and calls `mount(container)`. Verify on `/tools/cutlist-optimizer` in
+`npm run dev`, then commit and deploy the web repo as usual. Deploy the
+**free** build to the site — Pro is desktop-only.
+
+## Shipping the Pro exe
+
+```pwsh
+just pro
+```
+
+stages `release\TPT Cut List Optimizer Pro\` (exe + `dist\` + README.txt) and
+zips it to `release\TPT-Cut-List-Optimizer-Pro.zip` — that zip is the
+Gumroad artifact. Users run `tpt-cutlist-optimizer-pro.exe`; it needs Windows
+10+ with the WebView2 runtime (preinstalled on Win10 20H2+/Win11).
 
 ## Solver features
 

@@ -24,7 +24,8 @@
 - [x] `tpt-appfront init tpt-app-cutlist-optimizer --target dom` (path deps on the tpt-appfront checkout)
 - [x] Restructure scaffold to hub contract: `#[wasm_bindgen] pub fn mount(el)` + `#[wasm_bindgen(start)]` no-op unless `#tpt-appfront-root` present
 - [x] `index.html` carries the `#tpt-appfront-root` marker div
-- [x] Build pipeline script (`build.ps1` for Windows + `build.sh` + `justfile` wrappers): `cargo build --release --target wasm32-unknown-unknown` → `wasm-bindgen --target web --out-name cutlist-optimizer` → copy glue+wasm into the web repo `public/apps/cutlist-optimizer/` when `TPT_WEB_REPO` is set (glue named `cutlist-optimizer.js`, wasm keeps its `_bg.wasm` name — the glue resolves it via `import.meta.url`), otherwise `dist/web/`. Also pins `wasm-bindgen = "=0.2.126"` to the installed CLI and disables trunk's wasm-opt (`data-wasm-opt="0"` — modern Rust emits bulk-memory opcodes trunk's cached Binaryen rejects)
+- [x] Build pipeline script (`build.ps1` for Windows + `build.sh` + `justfile` wrappers): `cargo build --release --target wasm32-unknown-unknown` → `wasm-bindgen --target web --out-name cutlist-optimizer` → `dist\hub\`, copied into the web repo `public/apps/cutlist-optimizer/` when `-WebRepo`/`TPT_WEB_REPO` is set (glue named `cutlist-optimizer.js`, wasm keeps its `_bg.wasm` name — the glue resolves it via `import.meta.url`). Also pins `wasm-bindgen = "=0.2.126"` to the installed CLI and disables trunk's wasm-opt (`data-wasm-opt="0"` — modern Rust emits bulk-memory opcodes trunk's cached Binaryen rejects)
+- [x] Separate output dirs so builds never clobber each other: `dist\hub\` (website, always the FREE edition), `dist\desktop\` (trunk `--dist`, what the exe serves), `release\` (staged Pro exe package + zip). `-Pro` never touches `dist\hub`. `just deploy` copies the hub bundle into the web repo
 - [x] Hello-world shape verified: glue exports named `mount(container)` + `default` init, matching the `WasmAppRunner` contract; standalone `trunk build --release`/`trunk serve` mounts via `#tpt-appfront-root`. (Loading through the live hub page `/tools/cutlist-optimizer` in `npm run dev` remains to be done on the machine with the web repo — the `TPT_WEB_REPO` deploy path is ready.)
 - [x] git init + first commit
 
@@ -62,7 +63,7 @@ shared verbatim by the WASM and desktop editions and unit-testable on the host.
 - [ ] Gumroad: create product from apps.md listing copy ($49), upload exe, paste URL into `gumroadUrl` in the hub registry
 
 ## Phase 4 — Ship & measure
-- [x] WASM payload size check (build.ps1 reports it every run): free **73.9 KB gz**, pro **77.8 KB gz** — far under the ~400 KB first-load target
+- [x] WASM payload size check (build.ps1 reports it every run): free **75.7 KB gz**, pro **98.7 KB gz** — far under the ~400 KB first-load target
 - [ ] Registry entry `status: 'live'` with `wasm: { entry: '/apps/cutlist-optimizer/cutlist-optimizer.js' }` (web-repo side)
 - [ ] Verify hub card, detail page, sitemap entry, and runner load in dev; verify prod build after deploy (web-repo side; set `TPT_WEB_REPO` and run `build.ps1` to stage the bundle)
 - [ ] Cross-link from relevant construction calculators on fieldservice + llms.txt mention (web-repo side)
