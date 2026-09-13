@@ -50,6 +50,7 @@ shared verbatim by the WASM and desktop editions and unit-testable on the host.
 - [x] Free-tier limit enforced: single stock length input only, baseline packing only (improvement pass compiled out — the app `pro` feature maps to `tpt-cutlist-solver/improvement`); upsell copy + Pro link
 - [x] Sample data button (cabinet job: sides, shelves, rails, stiles) + Clear button
 - [x] Styling pass: self-contained injected stylesheet scoped to `.cutlist-app` (neutral light/dark via `prefers-color-scheme`, no external CSS deps; the DOM backend applies `class` verbatim and ignores custom attrs, so elements hook by class)
+- [x] Onboarding & UX pass: "How it works" guide (open by default; covers line format, kerf, materials, printing, privacy; toggled from the header), one-click example jobs (free: cabinet/shelving/fence rails; pro adds two-material and limited-stock examples), live counters under the textareas (sizes/pieces/total mm while typing; stock sizes + materials + capped bars), four stat cards (bars / utilization / offcut / cost or stock), and a per-bar color legend mapping segment swatches to part names
 
 ## Phase 3 — Paid desktop edition (cargo feature `pro`)
 - [x] `pro` feature gates the improvement optimizer through `tpt-cutlist-solver/improvement` (200 ms budget); the free build compiles it out entirely

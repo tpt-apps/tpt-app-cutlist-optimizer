@@ -15,7 +15,7 @@
 //! generated `.cutlist-w-<tenths>` classes backed by an injected `<style>`,
 //! and the whole stylesheet is injected once at mount — no external CSS.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
 
 use tpt_appfront_core::{Signal, UITree};
@@ -51,6 +51,50 @@ const SAMPLE_PARTS: &str = "730 x 4 Cabinet side @bench\n560 x 6 Shelf @bench\n3
 const SAMPLE_STOCKS: &str = "2400 x 4 @bench\n3000 x 2 @bench";
 const SAMPLE_KERF: &str = "3";
 
+/// Built-in example jobs: (button label, parts text, stock text, kerf mm).
+/// The free edition's "stock text" is a single length; the Pro edition's is
+/// the full stock textarea content (with materials and bar caps).
+#[cfg(not(feature = "pro"))]
+const EXAMPLES: &[(&str, &str, &str, &str)] = &[
+    ("Cabinet job", SAMPLE_PARTS, SAMPLE_STOCK, SAMPLE_KERF),
+    (
+        "Shelving",
+        "900 x 6 Shelf\n600 x 4 Side\n400 x 2 Back",
+        "1800",
+        "3",
+    ),
+    (
+        "Fence rails",
+        "2900 x 2 Rail\n1500 x 12 Paling",
+        "3200",
+        "5",
+    ),
+];
+#[cfg(feature = "pro")]
+const EXAMPLES: &[(&str, &str, &str, &str)] = &[
+    ("Cabinet job", SAMPLE_PARTS, SAMPLE_STOCKS, SAMPLE_KERF),
+    (
+        "Two materials",
+        "600 x 3 Shelf @ply\n400 x 2 Divider @pine\n1200 x 2 Top @ply",
+        "2400 x 4 @ply\n1800 x 6 @pine",
+        "3",
+    ),
+    (
+        "Limited stock",
+        "1500 x 8 Paling @treated\n2900 x 2 Rail @hardwood",
+        "3200 x 3 @hardwood\n1600 x 12 @treated",
+        "5",
+    ),
+];
+
+fn plural(count: usize) -> &'static str {
+    if count == 1 {
+        ""
+    } else {
+        "s"
+    }
+}
+
 /// What the results section is currently showing.
 #[derive(Clone)]
 enum Outcome {
@@ -69,14 +113,20 @@ enum Outcome {
 }
 
 /// App events (buttons only — text fields are read from the DOM on demand,
-/// which is what keeps the mounted-once panel free of focus loss).
+/// which is what keeps the mounted-once panel free of focus loss). The parts
+/// and stock textareas are the exception: their `on_input` only feeds the
+/// live counters, never a re-render of the panel itself.
 #[derive(Debug, Clone)]
 enum Msg {
     Optimize,
-    LoadSample,
     Clear,
+    LoadExample(usize),
+    PartsChanged(String),
+    ToggleHelp,
     #[cfg(feature = "pro")]
     Print,
+    #[cfg(feature = "pro")]
+    StocksChanged(String),
     #[cfg(feature = "pro")]
     SaveSet,
     #[cfg(feature = "pro")]
@@ -128,8 +178,25 @@ const BASE_CSS: &str = r#"
 .cutlist-lib-save{display:flex;gap:8px;margin-top:6px}
 .cutlist-lib-empty{color:var(--cl-muted);font-size:.85rem;margin:0}
 .cutlist-print{display:none}
+.cutlist-header{display:flex;justify-content:space-between;align-items:baseline;gap:10px;flex-wrap:wrap}
+.cutlist-ghost{background:transparent}
+.cutlist-examples{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;align-items:center}
+.cutlist-live{color:var(--cl-muted);font-size:.8rem;margin:6px 0 0;min-height:1.1em}
+.cutlist-divider{border-top:1px solid var(--cl-border);margin:14px 0 12px}
+.cutlist-stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;margin:0 0 12px}
+.cutlist-stat{background:var(--cl-panel);border:1px solid var(--cl-border);border-radius:8px;padding:8px 10px}
+.cutlist-stat-value{font-weight:700;font-size:1.15rem;margin:0}
+.cutlist-stat-label{color:var(--cl-muted);font-size:.75rem;margin:0}
+.cutlist-legend{display:flex;gap:10px;flex-wrap:wrap;margin-top:4px}
+.cutlist-legend-item{display:flex;gap:5px;align-items:center}
+.cutlist-swatch{width:12px;height:12px;border-radius:3px;flex:none}
+.cutlist-legend-label{font-size:.78rem;color:var(--cl-muted);margin:0}
+.cutlist-help{display:none;background:var(--cl-panel);border:1px solid var(--cl-border);border-radius:10px;padding:12px 16px;margin:0 0 14px}
+.cutlist-help.cutlist-open{display:block}
+.cutlist-help p{margin:6px 0;font-size:.9rem}
 @media print{
 .cutlist-no-print{display:none!important}
+.cutlist-help-root{display:none!important}
 .cutlist-print{display:block}
 .cutlist-track{height:20px}
 }
@@ -147,6 +214,12 @@ pub fn mount_app(container: &web_sys::Element) -> Result<(), wasm_bindgen::JsVal
 
     let results = Signal::new(Outcome::Idle);
 
+    // Live counters + the collapsible guide.
+    let parts_text = Signal::new(String::new());
+    #[cfg(feature = "pro")]
+    let stocks_text = Signal::new(String::new());
+    let help_open = Signal::new(true);
+
     // Saved stock sets (Pro): loaded from storage once, then kept in sync
     // by the save/load/delete handlers.
     #[cfg(feature = "pro")]
@@ -158,28 +231,47 @@ pub fn mount_app(container: &web_sys::Element) -> Result<(), wasm_bindgen::JsVal
     let dispatch: Rc<dyn Fn(Msg)> = {
         let container = container.clone();
         let results = results.clone();
+        let parts_text = parts_text.clone();
+        let help_open = help_open.clone();
         #[cfg(feature = "pro")]
         let library_sets = library_sets.clone();
+        #[cfg(feature = "pro")]
+        let stocks_text = stocks_text.clone();
         Rc::new(move |msg| match msg {
             Msg::Optimize => run_optimize(&container, &results),
-            Msg::LoadSample => {
-                write_field(&container, ".cutlist-parts", SAMPLE_PARTS);
+            Msg::LoadExample(index) => {
+                let Some((_, parts, stock_text, kerf)) = EXAMPLES.get(index) else {
+                    return;
+                };
+                write_field(&container, ".cutlist-parts", parts);
+                parts_text.set((*parts).to_string());
                 #[cfg(feature = "pro")]
-                write_field(&container, ".cutlist-stocks", SAMPLE_STOCKS);
+                {
+                    write_field(&container, ".cutlist-stocks", stock_text);
+                    stocks_text.set((*stock_text).to_string());
+                }
                 #[cfg(not(feature = "pro"))]
-                write_field(&container, ".cutlist-stock", SAMPLE_STOCK);
-                write_field(&container, ".cutlist-kerf", SAMPLE_KERF);
+                write_field(&container, ".cutlist-stock", stock_text);
+                write_field(&container, ".cutlist-kerf", kerf);
                 results.set(Outcome::Idle);
             }
             Msg::Clear => {
                 write_field(&container, ".cutlist-parts", "");
+                parts_text.set(String::new());
                 #[cfg(feature = "pro")]
-                write_field(&container, ".cutlist-stocks", "");
+                {
+                    write_field(&container, ".cutlist-stocks", "");
+                    stocks_text.set(String::new());
+                }
                 #[cfg(not(feature = "pro"))]
                 write_field(&container, ".cutlist-stock", SAMPLE_STOCK);
                 write_field(&container, ".cutlist-kerf", SAMPLE_KERF);
                 results.set(Outcome::Idle);
             }
+            Msg::PartsChanged(text) => parts_text.set(text),
+            Msg::ToggleHelp => help_open.set(!help_open.get()),
+            #[cfg(feature = "pro")]
+            Msg::StocksChanged(text) => stocks_text.set(text),
             #[cfg(feature = "pro")]
             Msg::Print => {
                 if let Some(window) = web_sys::window() {
@@ -213,9 +305,46 @@ pub fn mount_app(container: &web_sys::Element) -> Result<(), wasm_bindgen::JsVal
     )?;
     std::mem::forget(handle);
 
-    // 3. Pro: the reactive stock-set library and the print-only layout.
+    // 3. The collapsible "How it works" guide.
+    let help_el = container
+        .query_selector(".cutlist-help-root")?
+        .ok_or_else(|| wasm_bindgen::JsValue::from_str("help placeholder missing"))?;
+    let help_for_view = help_open.clone();
+    let handle = tpt_appfront_dom::render(
+        &help_el,
+        Rc::new(move || help_view(help_for_view.clone())),
+        dispatch.clone(),
+    )?;
+    std::mem::forget(handle);
+
+    // 4. Live counters under the textareas (re-parse on every keystroke —
+    //    cheap, and only these tiny sections re-render).
+    let parts_live_el = container
+        .query_selector(".cutlist-parts-live")?
+        .ok_or_else(|| wasm_bindgen::JsValue::from_str("parts counter placeholder missing"))?;
+    let parts_text_for_live = parts_text.clone();
+    let handle = tpt_appfront_dom::render(
+        &parts_live_el,
+        Rc::new(move || parts_live_view(parts_text_for_live.clone())),
+        dispatch.clone(),
+    )?;
+    std::mem::forget(handle);
+
+    // 5. Pro: the reactive stock-set library, live stock counter, and the
+    //    print-only layout.
     #[cfg(feature = "pro")]
     {
+        let stocks_live_el = container
+            .query_selector(".cutlist-stocks-live")?
+            .ok_or_else(|| wasm_bindgen::JsValue::from_str("stock counter placeholder missing"))?;
+        let stocks_text_for_live = stocks_text.clone();
+        let handle = tpt_appfront_dom::render(
+            &stocks_live_el,
+            Rc::new(move || stocks_live_view(stocks_text_for_live.clone())),
+            dispatch.clone(),
+        )?;
+        std::mem::forget(handle);
+
         let library_el = container
             .query_selector(".cutlist-library")?
             .ok_or_else(|| wasm_bindgen::JsValue::from_str("library placeholder missing"))?;
@@ -254,30 +383,54 @@ fn shell_tree() -> UITree<Msg> {
     let mut root_builder = tpt_appfront_core::ContainerBuilder::<Msg>::new();
     root_builder
         .container(|c| {
-            c.heading(2, "Cut List Optimizer")
-                .class("cutlist-no-print");
+        c.container(|header| {
+            header.heading(2, "Cut List Optimizer");
+            header
+                .button("Help & examples")
+                .class("cutlist-btn cutlist-ghost")
+                .on_click(Msg::ToggleHelp);
+        })
+        .class("cutlist-header cutlist-no-print");
         c.text("Paste your parts, set the stock, optimize — everything runs locally in your browser.")
             .class("cutlist-sub")
             .class("cutlist-no-print");
 
         c.container(|card| {
-            card.heading(3, "1 \u{b7} Job details")
+            card.heading(3, "1 \u{b7} Parts")
                 .class("cutlist-no-print");
             card.text("One part per line: length x quantity, optional label. Tag a material with @name.")
                 .class("cutlist-hint");
-            card.textarea("").class("cutlist-parts");
+            card.textarea("")
+                .class("cutlist-parts")
+                .on_input(|value| Msg::PartsChanged(value));
+            card.container(|_| {}).class("cutlist-parts-live");
 
+            card.container(|examples| {
+                for (index, (name, _, _, _)) in EXAMPLES.iter().enumerate() {
+                    examples
+                        .button(*name)
+                        .class("cutlist-btn cutlist-ghost")
+                        .on_click(Msg::LoadExample(index));
+                }
+            })
+            .class("cutlist-examples");
+
+            card.container(|_| {}).class("cutlist-divider");
+
+            card.heading(3, "2 \u{b7} Stock & blade")
+                .class("cutlist-no-print");
             card.container(|fields| {
                 #[cfg(feature = "pro")]
                 {
                     fields
                         .container(|field| {
                             field
-                                .text("Stock lengths — one per line: length [x max bars] [@material]")
+                                .text("Stock lines: length [x max bars] [@material]")
                                 .class("cutlist-label");
                             field
                                 .textarea(SAMPLE_STOCKS)
-                                .class("cutlist-stocks");
+                                .class("cutlist-stocks")
+                                .on_input(|value| Msg::StocksChanged(value));
                         })
                         .class("cutlist-field");
                 }
@@ -302,16 +455,18 @@ fn shell_tree() -> UITree<Msg> {
                     .class("cutlist-field");
             })
             .class("cutlist-row");
+            #[cfg(feature = "pro")]
+            card.container(|_| {}).class("cutlist-stocks-live");
 
+            card.container(|_| {}).class("cutlist-divider");
+
+            card.heading(3, "3 \u{b7} Optimize")
+                .class("cutlist-no-print");
             card.container(|actions| {
                 actions
                     .button("Optimize cuts")
                     .class("cutlist-btn cutlist-primary")
                     .on_click(Msg::Optimize);
-                actions
-                    .button("Load sample job")
-                    .class("cutlist-btn")
-                    .on_click(Msg::LoadSample);
                 actions
                     .button("Clear")
                     .class("cutlist-btn")
@@ -325,6 +480,9 @@ fn shell_tree() -> UITree<Msg> {
             .class("cutlist-actions");
         })
         .class("cutlist-card cutlist-no-print");
+
+        // The collapsible guide mounts into this placeholder (open by default).
+        c.container(|_| {}).class("cutlist-help-root cutlist-no-print");
 
         // Pro: the reactive saved-stock-set library.
         #[cfg(feature = "pro")]
@@ -645,7 +803,8 @@ fn results_view(outcome: Signal<Outcome>) -> UITree<Msg> {
             c.container(|summary| {
             let (headline, detail) = match &outcome {
                 Outcome::Idle => (
-                    "Enter your cut list, then press Optimize cuts.".to_string(),
+                    "Pick an example above, or paste your parts and press Optimize cuts."
+                        .to_string(),
                     String::new(),
                 ),
                 Outcome::Invalid(issues) => (
@@ -694,6 +853,58 @@ fn results_view(outcome: Signal<Outcome>) -> UITree<Msg> {
         })
         .class("cutlist-summary");
 
+        // Stat cards — always four, so the shape stays stable for the
+        // in-place reconciler across Idle / Invalid / Solved.
+        c.container(|stats| {
+            #[allow(unused_variables)]
+            let (bars, utilization, offcut, fourth_value, fourth_label) = match &outcome {
+                Outcome::Solved {
+                    solution,
+                    stocks,
+                    ..
+                } => {
+                    let stock_total: u64 = solution
+                        .bars
+                        .iter()
+                        .map(|bar| u64::from(stocks[bar.stock_index].length))
+                        .sum();
+                    #[cfg(feature = "pro")]
+                    let (fourth_value, fourth_label) =
+                        (grouped(solution.cost), "Stock cost".to_string());
+                    #[cfg(not(feature = "pro"))]
+                    let (fourth_value, fourth_label) =
+                        (grouped(stock_total), "Stock used".to_string());
+                    (
+                        solution.bar_count().to_string(),
+                        format!("{:.1}%", solution.utilization * 100.0),
+                        format!("{} mm", grouped(solution.waste as u64)),
+                        fourth_value,
+                        fourth_label,
+                    )
+                }
+                _ => (
+                    "\u{2014}".to_string(),
+                    "\u{2014}".to_string(),
+                    "\u{2014}".to_string(),
+                    "\u{2014}".to_string(),
+                    "Stock".to_string(),
+                ),
+            };
+            for (label, value) in [
+                ("Bars used", bars),
+                ("Utilization", utilization),
+                ("Total offcut", offcut),
+                (fourth_label.as_str(), fourth_value),
+            ] {
+                stats.container(|stat| {
+                    stat.text(value).class("cutlist-stat-value");
+                    stat.text(label).class("cutlist-stat-label");
+                })
+                .class("cutlist-stat");
+            }
+        })
+        .class("cutlist-stats");
+
         c.container(|errors| {
             if let Outcome::Invalid(issues) = &outcome {
                 for issue in issues {
@@ -731,6 +942,7 @@ fn results_view(outcome: Signal<Outcome>) -> UITree<Msg> {
 fn append_bars(c: &mut tpt_appfront_core::ContainerBuilder<Msg>, outcome: &Outcome) {
     let Outcome::Solved {
         solution,
+        parts,
         stocks,
         material_names,
         kerf,
@@ -780,6 +992,30 @@ fn append_bars(c: &mut tpt_appfront_core::ContainerBuilder<Msg>, outcome: &Outco
                     .class(format!("cutlist-waste cutlist-w-{waste_tenths}"));
             })
             .class("cutlist-track");
+
+            // Legend: color swatch -> part name (and how many of it are on
+            // this bar), matching the segment colors above.
+            bar_node.container(|legend| {
+                let mut counts: BTreeMap<usize, u32> = BTreeMap::new();
+                for cut in &bar.cuts {
+                    *counts.entry(cut.part).or_insert(0) += 1;
+                }
+                for (part_index, count) in counts {
+                    let color = part_index % 8;
+                    legend
+                        .container(|_| {})
+                        .class(format!("cutlist-swatch cutlist-c{color}"));
+                    let name = display_label(&parts[part_index].label, part_index);
+                    if count > 1 {
+                        legend
+                            .text(format!("{name} \u{d7}{count}"))
+                            .class("cutlist-legend-label");
+                    } else {
+                        legend.text(name).class("cutlist-legend-label");
+                    }
+                }
+            })
+            .class("cutlist-legend");
         })
         .class("cutlist-bar");
     }
@@ -901,6 +1137,147 @@ fn grouped(value: u64) -> String {
     grouped
 }
 
+/// Live summary under the parts textarea: sizes, pieces and total length,
+/// recomputed on every keystroke. Empty until there is something to show.
+fn parts_live_view(parts_text: Signal<String>) -> UITree<Msg> {
+    let text = parts_text.get();
+    let summary = match parse::parse_parts(&text) {
+        Ok(parts) if !parts.is_empty() => {
+            let pieces: u32 = parts.iter().map(|p| p.qty).sum();
+            let total_mm: u64 = parts
+                .iter()
+                .map(|p| u64::from(p.length) * u64::from(p.qty))
+                .sum();
+            format!(
+                "{} size{} \u{b7} {} piece{} \u{b7} {} mm to cut",
+                parts.len(),
+                plural(parts.len()),
+                pieces,
+                plural(pieces as usize),
+                grouped(total_mm)
+            )
+        }
+        _ => String::new(),
+    };
+
+    let mut root_builder = tpt_appfront_core::ContainerBuilder::<Msg>::new();
+    root_builder.text(summary).class("cutlist-live");
+    root_builder
+        .into_only_child()
+        .expect("live view builds exactly one root container")
+}
+
+/// Pro: live summary under the stock textarea.
+#[cfg(feature = "pro")]
+fn stocks_live_view(stocks_text: Signal<String>) -> UITree<Msg> {
+    let text = stocks_text.get();
+    let summary = match parse::parse_stocks(&text) {
+        Ok(stocks) if !stocks.is_empty() => {
+            let materials: Vec<String> = {
+                let mut names: Vec<String> = stocks
+                    .iter()
+                    .map(|s| {
+                        if s.material.is_empty() {
+                            "default".to_string()
+                        } else {
+                            s.material.clone()
+                        }
+                    })
+                    .collect();
+                names.sort();
+                names.dedup();
+                names
+            };
+            let capped: u32 = stocks
+                .iter()
+                .filter_map(|s| s.max_bars)
+                .sum();
+            format!(
+                "{} stock size{} \u{b7} materials: {}{}",
+                stocks.len(),
+                plural(stocks.len()),
+                materials.join(", "),
+                if capped > 0 {
+                    format!(" \u{b7} up to {capped} capped bars")
+                } else {
+                    String::new()
+                }
+            )
+        }
+        _ => String::new(),
+    };
+
+    let mut root_builder = tpt_appfront_core::ContainerBuilder::<Msg>::new();
+    root_builder.text(summary).class("cutlist-live");
+    root_builder
+        .into_only_child()
+        .expect("live view builds exactly one root container")
+}
+
+/// The collapsible "How it works" guide — open by default so first-time
+/// users see the format, what kerf means, and what they get.
+#[cfg_attr(feature = "pro", allow(unused_variables))]
+fn help_view(open: Signal<bool>) -> UITree<Msg> {
+    let open = open.get();
+    let mut root_builder = tpt_appfront_core::ContainerBuilder::<Msg>::new();
+    root_builder
+        .container(|c| {
+            c.heading(3, "How it works");
+            c.text(
+                "1 \u{b7} Parts — one piece type per line: `length x quantity label`. \
+                 `600 x 3 Shelf` means three 600 mm shelves. `#` lines are comments, \
+                 and duplicate lines merge their quantities.",
+            )
+            .class("cutlist-help-p");
+            #[cfg(feature = "pro")]
+            c.text(
+                "Materials — tag a part with @name (`600 x 2 Shelf @ply`) and add one stock \
+                 line per stock: `2400 x 4 @ply` means 2400 mm stock, at most 4 bars. A part \
+                 is only ever cut from its own material, and pieces that fit no stock of \
+                 that material are flagged before optimizing.",
+            )
+            .class("cutlist-help-p");
+            c.text(
+                "2 \u{b7} Stock & blade — the stock length is the board you cut from. Kerf is \
+                 the blade width lost to every cut (about 3 mm for a circular saw, 4\u{2013}5 mm \
+                 for a track saw). The optimizer charges kerf between cuts, so the packing \
+                 is real-world accurate.",
+            )
+            .class("cutlist-help-p");
+            c.text(
+                "3 \u{b7} Optimize — every piece is packed onto bars, drawn to scale, with exact \
+                 cut positions in the table below. Offcut is the material left over; \
+                 utilization is the share of stock that becomes product.",
+            )
+            .class("cutlist-help-p");
+            #[cfg(feature = "pro")]
+            c.text(
+                "Printing — the Print layout button opens a shop-floor sheet with the diagrams \
+                 and cut positions, ready to take to the saw. Saved stock sets let you store \
+                 your stock lengths once and reload them any time (kept on this device).",
+            )
+            .class("cutlist-help-p");
+            c.text(
+                "Everything runs locally — your cut list never leaves this device.",
+            )
+            .class("cutlist-help-p");
+            c.text(format!(
+                "Cut List Optimizer v{} \u{b7} free edition: one stock length, fast packing. \
+                 Pro adds multiple materials, the improved search, saved stock sets and printing.",
+                env!("CARGO_PKG_VERSION")
+            ))
+            .class("cutlist-engine");
+        })
+        .class(if open {
+            "cutlist-help cutlist-open"
+        } else {
+            "cutlist-help"
+        });
+    root_builder
+        .into_only_child()
+        .expect("help view builds exactly one root container")
+}
+
 /// Pro: the print-only shop-floor layout. Lives in its own reactive mount
 /// (hidden on screen via `.cutlist-print`, revealed by the print stylesheet
 /// when the "Print layout" button calls `window.print()`). Mirrors the
@@ -978,7 +1355,7 @@ fn library_view(sets: Signal<Vec<SavedSet>>) -> UITree<Msg> {
     let mut root_builder = tpt_appfront_core::ContainerBuilder::<Msg>::new();
     root_builder
         .container(|c| {
-            c.heading(3, "2 \u{b7} Saved stock sets");
+            c.heading(3, "Saved stock sets");
             c.container(|rows| {
                 if sets.is_empty() {
                     rows.text("No saved sets yet — configure the stock lengths above and save them for next time.")
