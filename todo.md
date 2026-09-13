@@ -13,12 +13,15 @@
 > mounts into the `#tpt-appfront-root` marker div instead — never `document.body` —
 > so the two hosts never double-mount.
 >
-> **Status 2026-09-13:** Phases 0–2 complete and verified; Phase 3's
-> multi-material solver + UI, stock-set library and print export are done
-> (free bundle 75.7 KB gz, pro bundle 98.7 KB gz, desktop exe builds).
-> Remaining items are blocked on the web repo / Gumroad (not on this machine),
-> exe-side JSON persistence (needs a request/response IPC in appfront-webview),
-> and the interactive desktop smoke test.
+> **Status 2026-09-14:** Phases 0–2 complete and verified; Phase 3's
+> multi-material solver + UI, stock-set library and print export are done;
+> the whole Phase 5 backlog that lives in this repo is done and
+> browser-smoke-tested (free bundle 116.7 KB gz, pro 141.9 KB gz — the
+> Phase 5 feature set cost ~+32 KB gz over the 82 KB baseline, still far
+> under the ~400 KB first-load target). Remaining items are blocked on the
+> web repo / Gumroad (not on this machine), exe-side JSON persistence
+> (needs a request/response IPC in appfront-webview), the MCP-hosted e2e
+> harness, and the interactive desktop smoke test.
 
 ## Phase 0 — Scaffold & pipeline proof
 - [x] `tpt-appfront init tpt-app-cutlist-optimizer --target dom` (path deps on the tpt-appfront checkout)
@@ -72,22 +75,32 @@ shared verbatim by the WASM and desktop editions and unit-testable on the host.
 - [ ] Verify hub card, detail page, sitemap entry, and runner load in dev; verify prod build after deploy (web-repo side; set `TPT_WEB_REPO` and run `build.ps1` to stage the bundle)
 - [ ] Cross-link from relevant construction calculators on fieldservice + llms.txt mention (web-repo side)
 
-## Phase 5 — Polish, adoption & roadmap (backlog)
+## Phase 5 — Polish, adoption & roadmap
 
 Adoption / reach:
-- [ ] Shareable permalinks — encode the job in the URL hash (`#/j=…`), so every shared link lands a new user on a pre-filled, already-solved job (biggest free adoption funnel)
-- [ ] Imperial units toggle (mm ↔ inches) for US/global adoption — thread a unit factor through the UI + parser formatting (solver stays integer mm internally)
-- [ ] CSV import — mirror of the CSV export for spreadsheet-first users (paste or upload a CSV of parts)
-- [ ] Kerf calibration wizard — "cut twice, measure the gap" flow that solves for the real kerf instead of asking users to guess
+- [x] Shareable permalinks — the job is encoded in the URL hash (`#/j=…`), kept in sync on every optimize, and a "Copy share link" button copies the URL; an incoming link fills the fields and optimizes on load (biggest free adoption funnel)
+- [x] Imperial units toggle (mm ↔ inches) — units selector threads through parsing (decimal inches accepted), every display surface, CSV/SVG exports and the permalink payload; the solver stays integer mm internally; switching units converts the loaded job in place
+- [x] CSV import — "Import CSV" file picker (length,qty,label[,material] with header detection, quoted cells, unit suffixes) plus comma-tolerant part-line parsing so spreadsheet rows can be pasted straight into the parts box
+- [x] Kerf calibration wizard — "Calibrate kerf…" flow (board − piece − remainder = kerf) with validation, a "Use this kerf" shortcut, and unit-aware inputs
 
 Export / workflow:
-- [ ] SVG (or PNG) export of the bar diagrams — vector output for quotes, invoices and emails
-- [ ] Project files — save/load the whole job as `.cutlist.json` from disk (desktop), enabling save-then-quote workflows
-- [ ] Cutting sequence report — ordered saw-ops list per bar ("cut at 730, then 1290, …") as a printable sheet
-- [ ] Tooltips on cut segments (hover shows the piece label; needs `title`/`aria-label` support in appfront-dom for arbitrary nodes)
+- [x] SVG export of the bar diagrams — "Download SVG" renders proportional per-bar diagrams with labels, native `<title>` tooltips and job summary (both editions)
+- [x] Project files — "Save job"/"Open job…" round-trip the whole job as `.cutlist.json` (hand-rolled JSON in `src/project.rs` keeps serde out of the free build)
+- [x] Cutting sequence report — ordered saw-ops list per bar ("Bar 1: Side (730 mm) at 0 mm, then …") in the results view and on the Pro print sheet (both editions)
+- [x] Tooltips on cut segments — `title` attributes (piece, length, offset, grain, material) via the new `NodeMeta::attrs` rendering in tpt-appfront-dom
 
 Solver / UX refinements:
-- [ ] Configurable offcut-bank threshold (currently fixed at 150 mm) + an "offcut inventory" view listing what is banked
-- [ ] Grain-direction / end-grain notes per part (constraint metadata carried through to the diagram and print sheet)
-- [ ] e2e smoke tests through `tpt-appfront-mcp` — mount the real DOM app, click an example, assert bars + stats render (guards the whole UI, not just the parser/solver)
-- [ ] Upgrade nudge metrics: count optimizations per device and show the Pro nudge after N jobs instead of immediately (softer funnel)
+- [x] Configurable offcut-bank threshold (Pro input, persisted) + an "offcut inventory" view listing leftovers over the threshold, grouped by length + material
+- [x] Grain-direction notes per part — `!grain` tag carried into the placement table (Grain column), diagram legend, tooltips and exports (informational; the 1D solver ignores it)
+- [x] Upgrade nudge metrics: optimizations are counted per device and the free edition shows the Pro nudge only after 3 jobs instead of immediately; the Pro build no longer renders the "get Pro" upsell at all
+
+Fixes found by the Phase 5 e2e pass (app + tpt-appfront-dom):
+- [x] Results/print trees are now kind-stable for the positional reconciler (bars live in an always-present wrapper; Idle/Solved keep the same node kinds at every position) — a kind flip previously aborted the render silently mid-way, dropping everything after it
+- [x] tpt-appfront-dom: freshly inserted subtrees now get recursive mounted records (`record_mount_tree` reused in `reconcile_children`, extended to non-windowed DataGrid rows) — the second render over a fresh subtree used to duplicate its children
+- [x] tpt-appfront-dom: `NodeMeta::attrs` (e.g. `title`) are applied on create and reconcile
+- [x] The app root carries `.cutlist-app` itself, so standalone trunk/desktop builds are styled regardless of the host container's class
+
+Still open (needs the tpt-appfront host side or a desktop session):
+- [ ] e2e smoke tests through `tpt-appfront-mcp` — the browser smoke test above (mount, example click, bars/stats/sequence/grid assertions) guards the app, but the MCP-hosted harness would need the app mounted behind the MCP server backend
+- [ ] Known framework quirk: classes on bare `text` nodes are dropped by tpt-appfront-dom (headline/bar-header/stat-value styling needs wrapper divs or a backend `span` wrapper) — pre-existing, cosmetic
+- [ ] Interactive desktop smoke test (open exe, run sample job, print)

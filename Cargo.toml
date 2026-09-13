@@ -32,6 +32,7 @@ serde_json = { version = "1", optional = true }
 # Pinned to the installed wasm-bindgen CLI version — the CLI rejects wasm
 # built against a different schema version. Bump both together.
 wasm-bindgen = "=0.2.126"
+js-sys = "0.3"
 web-sys = { version = "0.3", features = [
     "Document",
     "Window",
@@ -44,6 +45,20 @@ web-sys = { version = "0.3", features = [
     "HtmlAnchorElement",
     "EventTarget",
     "KeyboardEvent",
+    # Shareable permalinks: read location.hash, replace it in place.
+    "Location",
+    "History",
+    # Copy share link: async Clipboard API with an execCommand fallback.
+    "Navigator",
+    "Clipboard",
+    # CSV / project-file import: the hidden file picker + FileReader.
+    "File",
+    "FileList",
+    "FileReader",
+    "Blob",
+    "Event",
+    # execCommand fallback for copy-to-clipboard in older webviews.
+    "HtmlDocument",
 ] }
 console_error_panic_hook = "0.1"
 

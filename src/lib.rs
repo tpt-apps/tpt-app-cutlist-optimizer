@@ -14,6 +14,15 @@
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 mod parse;
 
+// Example jobs + the share-link codec — DOM-free, so the integrity tests
+// (every example must parse AND solve) run on the host.
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+mod examples;
+
+// Project files (.cutlist.json) — DOM-free reader/writer, host-tested.
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+mod project;
+
 // The DOM app compiles only for wasm32 (tpt-appfront-dom is an empty crate
 // on other targets), so host `cargo test` still runs the parser suite.
 #[cfg(target_arch = "wasm32")]
