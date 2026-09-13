@@ -123,6 +123,7 @@ enum Msg {
     LoadExample(usize),
     PartsChanged(String),
     ToggleHelp,
+    ExportCsv,
     #[cfg(feature = "pro")]
     Print,
     #[cfg(feature = "pro")]
@@ -133,6 +134,8 @@ enum Msg {
     LoadSet(String),
     #[cfg(feature = "pro")]
     DeleteSet(String),
+    #[cfg(feature = "pro")]
+    SaveOffcuts,
 }
 
 const BASE_CSS: &str = r#"
@@ -253,7 +256,9 @@ pub fn mount_app(container: &web_sys::Element) -> Result<(), wasm_bindgen::JsVal
                 #[cfg(not(feature = "pro"))]
                 write_field(&container, ".cutlist-stock", stock_text);
                 write_field(&container, ".cutlist-kerf", kerf);
-                results.set(Outcome::Idle);
+                // Loading an example is also the demo: optimize right away so
+                // first-time users immediately see a solved cut list.
+                run_optimize(&container, &results);
             }
             Msg::Clear => {
                 write_field(&container, ".cutlist-parts", "");
@@ -270,6 +275,7 @@ pub fn mount_app(container: &web_sys::Element) -> Result<(), wasm_bindgen::JsVal
             }
             Msg::PartsChanged(text) => parts_text.set(text),
             Msg::ToggleHelp => help_open.set(!help_open.get()),
+            Msg::ExportCsv => export_csv(&results),
             #[cfg(feature = "pro")]
             Msg::StocksChanged(text) => stocks_text.set(text),
             #[cfg(feature = "pro")]
@@ -284,6 +290,8 @@ pub fn mount_app(container: &web_sys::Element) -> Result<(), wasm_bindgen::JsVal
             Msg::LoadSet(name) => load_stock_set(&container, &library_sets, &name),
             #[cfg(feature = "pro")]
             Msg::DeleteSet(name) => delete_stock_set(&library_sets, &name),
+            #[cfg(feature = "pro")]
+            Msg::SaveOffcuts => save_offcuts(&container, &results, &stocks_text),
         })
     };
 
@@ -291,6 +299,44 @@ pub fn mount_app(container: &web_sys::Element) -> Result<(), wasm_bindgen::JsVal
     let shell = shell_tree();
     let root = tpt_appfront_dom::mount(container, &shell, dispatch.clone())?;
     std::mem::forget(root);
+
+    // Restore the last job (kept on this device only) before wiring the
+    // reactive sections, so the counters start consistent.
+    if let Some(parts) = storage_get("cutlist-last-parts") {
+        if !parts.trim().is_empty() {
+            write_field(container, ".cutlist-parts", &parts);
+            parts_text.set(parts);
+            if let Some(stock) = storage_get("cutlist-last-stock") {
+                #[cfg(feature = "pro")]
+                {
+                    write_field(container, ".cutlist-stocks", &stock);
+                    stocks_text.set(stock);
+                }
+                #[cfg(not(feature = "pro"))]
+                write_field(container, ".cutlist-stock", &stock);
+            }
+            if let Some(kerf) = storage_get("cutlist-last-kerf") {
+                write_field(container, ".cutlist-kerf", &kerf);
+            }
+        }
+    }
+
+    // Ctrl+Enter runs the optimizer from anywhere (including inside the
+    // textareas). Raw keydown listener; the closure is intentionally leaked
+    // for the lifetime of the page.
+    let dispatch_for_keys = dispatch.clone();
+    let keydown = wasm_bindgen::closure::Closure::<dyn FnMut(web_sys::KeyboardEvent)>::new(
+        move |event: web_sys::KeyboardEvent| {
+            if event.ctrl_key() && !event.shift_key() && !event.alt_key() && event.key() == "Enter"
+            {
+                event.prevent_default();
+                dispatch_for_keys(Msg::Optimize);
+            }
+        },
+    );
+    document
+        .add_event_listener_with_callback("keydown", keydown.as_ref().unchecked_ref())?;
+    keydown.forget();
 
     // 2. The reactive results section — its own fine-grained render loop
     //    (create_effect + MountedRoot::render) into the placeholder.
@@ -519,6 +565,7 @@ fn shell_tree() -> UITree<Msg> {
 /// 200 ms Pro search is off the reactive graph.
 fn run_optimize(container: &web_sys::Element, results: &Signal<Outcome>) {
     let parts_text = read_textarea(container, ".cutlist-parts");
+    let stock_text = read_stock_field(container);
     let kerf_text = read_input(container, ".cutlist-kerf");
 
     let mut issues: Vec<Issue> = Vec::new();
@@ -544,9 +591,9 @@ fn run_optimize(container: &web_sys::Element, results: &Signal<Outcome>) {
 
     // Edition-specific stock collection with inline validation.
     #[cfg(feature = "pro")]
-    let (stocks, material_names) = collect_pro_stocks(container, &parts, &mut issues);
+    let (stocks, material_names) = collect_pro_stocks(&stock_text, &parts, &mut issues);
     #[cfg(not(feature = "pro"))]
-    let (stocks, material_names) = collect_free_stock(container, &parts, &mut issues);
+    let (stocks, material_names) = collect_free_stock(&stock_text, &parts, &mut issues);
 
     if !issues.is_empty() {
         results.set(Outcome::Invalid(issues));
@@ -571,13 +618,20 @@ fn run_optimize(container: &web_sys::Element, results: &Signal<Outcome>) {
     );
 
     match run_solver(&problem) {
-        Ok(solution) => results.set(Outcome::Solved {
-            solution,
-            parts,
-            stocks,
-            material_names,
-            kerf,
-        }),
+        Ok(solution) => {
+            // Remember the job on this device so a relaunch continues where
+            // the user left off.
+            storage_set("cutlist-last-parts", &parts_text);
+            storage_set("cutlist-last-stock", &stock_text);
+            storage_set("cutlist-last-kerf", &kerf_text);
+            results.set(Outcome::Solved {
+                solution,
+                parts,
+                stocks,
+                material_names,
+                kerf,
+            });
+        }
         Err(error) => results.set(Outcome::Invalid(vec![Issue {
             line: None,
             message: error.to_string(),
@@ -585,14 +639,26 @@ fn run_optimize(container: &web_sys::Element, results: &Signal<Outcome>) {
     }
 }
 
+/// Reads whichever field holds the stock definition in this edition
+/// (single length input on free, multi-line textarea on Pro).
+fn read_stock_field(container: &web_sys::Element) -> String {
+    #[cfg(feature = "pro")]
+    {
+        read_textarea(container, ".cutlist-stocks")
+    }
+    #[cfg(not(feature = "pro"))]
+    {
+        read_input(container, ".cutlist-stock")
+    }
+}
+
 /// Free edition: a single stock length field, all parts of one material.
 #[cfg(not(feature = "pro"))]
 fn collect_free_stock(
-    container: &web_sys::Element,
+    stock_text: &str,
     parts: &[ParsedPart],
     issues: &mut Vec<Issue>,
 ) -> (Vec<StockSpec>, Vec<String>) {
-    let stock_text = read_input(container, ".cutlist-stock");
     let stock_length = match stock_text.trim().parse::<u32>() {
         Ok(value) if value > 0 => value,
         _ => {
@@ -621,12 +687,11 @@ fn collect_free_stock(
 /// Pro edition: the stock textarea, with materials and per-stock bar caps.
 #[cfg(feature = "pro")]
 fn collect_pro_stocks(
-    container: &web_sys::Element,
+    stocks_text: &str,
     parts: &[ParsedPart],
     issues: &mut Vec<Issue>,
 ) -> (Vec<StockSpec>, Vec<String>) {
-    let stocks_text = read_textarea(container, ".cutlist-stocks");
-    let parsed_stocks = match parse::parse_stocks(&stocks_text) {
+    let parsed_stocks = match parse::parse_stocks(stocks_text) {
         Ok(stocks) => stocks,
         Err(mut line_issues) => {
             issues.append(&mut line_issues);
@@ -922,13 +987,22 @@ fn results_view(outcome: Signal<Outcome>) -> UITree<Msg> {
 
         append_bars(c, &outcome);
 
-        #[cfg(feature = "pro")]
-        c.data_grid(
-            ["Part", "Material", "Length", "Bar", "Position"],
-            placement_rows(&outcome),
-        );
-        #[cfg(not(feature = "pro"))]
-        c.data_grid(["Part", "Length", "Bar", "Position"], placement_rows(&outcome));
+        c.data_grid(grid_columns(), placement_rows(&outcome));
+
+        c.container(|row| {
+            row.button("Download CSV")
+                .class("cutlist-btn")
+                .on_click(Msg::ExportCsv);
+            #[cfg(feature = "pro")]
+            {
+                row.button("Save offcuts as stock")
+                    .class("cutlist-btn")
+                    .on_click(Msg::SaveOffcuts);
+                row.text("Leftovers of 150 mm or more are appended to your stock lines.")
+                    .class("cutlist-hint");
+            }
+        })
+        .class("cutlist-actions cutlist-no-print");
         })
         .class("cutlist-results-view");
     root_builder
@@ -1423,6 +1497,143 @@ fn delete_stock_set(sets: &Signal<Vec<SavedSet>>, name: &str) {
     list.retain(|set| set.name != name);
     crate::library::store(&list);
     sets.set(list);
+}
+
+/// Placement-table columns for this edition (Pro adds Material).
+fn grid_columns() -> Vec<&'static str> {
+    #[cfg(feature = "pro")]
+    {
+        vec!["Part", "Material", "Length", "Bar", "Position"]
+    }
+    #[cfg(not(feature = "pro"))]
+    {
+        vec!["Part", "Length", "Bar", "Position"]
+    }
+}
+
+/// Pro: the offcut bank — every leftover of at least 150 mm becomes a stock
+/// line (`1234 x 1 @material`) appended to the stock textarea, so the next
+/// job reuses real offcuts instead of fresh stock.
+#[cfg(feature = "pro")]
+fn save_offcuts(
+    container: &web_sys::Element,
+    results: &Signal<Outcome>,
+    stocks_text: &Signal<String>,
+) {
+    const MIN_OFFCUT: u32 = 150;
+    let outcome = results.get();
+    let Outcome::Solved {
+        solution,
+        stocks,
+        material_names,
+        kerf,
+        ..
+    } = outcome
+    else {
+        return;
+    };
+
+    let mut lines: Vec<String> = Vec::new();
+    for bar in &solution.bars {
+        let stock = &stocks[bar.stock_index];
+        let waste = bar.waste(stock.length, kerf, 0);
+        if waste < MIN_OFFCUT {
+            continue;
+        }
+        match material_names.get(stock.material).filter(|n| !n.is_empty()) {
+            Some(name) => lines.push(format!("{waste} x 1 @{name}")),
+            None => lines.push(format!("{waste} x 1")),
+        }
+    }
+    if lines.is_empty() {
+        return;
+    }
+
+    let mut text = read_stock_field(container).trim_end().to_string();
+    if !text.is_empty() {
+        text.push('\n');
+    }
+    text.push_str(&lines.join("\n"));
+    write_field(container, ".cutlist-stocks", &text);
+    stocks_text.set(text);
+}
+
+/// Downloads the placement table as CSV via a data-URI anchor click.
+fn export_csv(results: &Signal<Outcome>) {
+    let outcome = results.get();
+    if !matches!(outcome, Outcome::Solved { .. }) {
+        return;
+    }
+
+    let mut csv = String::from("# TPT Cut List Optimizer\n");
+    csv.push_str(&grid_columns().join(","));
+    csv.push('\n');
+    for row in placement_rows(&outcome) {
+        csv.push_str(
+            &row.iter()
+                .map(|cell| escape_csv(cell))
+                .collect::<Vec<_>>()
+                .join(","),
+        );
+        csv.push('\n');
+    }
+
+    let Some(document) = web_sys::window().and_then(|w| w.document()) else {
+        return;
+    };
+    let Ok(anchor) = document.create_element("a") else {
+        return;
+    };
+    let uri = format!(
+        "data:text/csv;charset=utf-8,{}",
+        percent_encode(csv.as_bytes())
+    );
+    let _ = anchor.set_attribute("href", &uri);
+    let _ = anchor.set_attribute("download", "cutlist.csv");
+    if let Some(body) = document.body() {
+        let _ = body.append_child(&anchor);
+        if let Some(link) = anchor.dyn_ref::<web_sys::HtmlAnchorElement>() {
+            link.click();
+        }
+        let _ = body.remove_child(&anchor);
+    }
+}
+
+fn escape_csv(cell: &str) -> String {
+    if cell.contains(',') || cell.contains('"') || cell.contains('\n') {
+        format!("\"{}\"", cell.replace('"', "\"\""))
+    } else {
+        cell.to_string()
+    }
+}
+
+fn percent_encode(bytes: &[u8]) -> String {
+    let mut out = String::with_capacity(bytes.len());
+    for &byte in bytes {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(byte as char)
+            }
+            _ => out.push_str(&format!("%{byte:02X}")),
+        }
+    }
+    out
+}
+
+/// Reads a value from localStorage (None on any error).
+fn storage_get(key: &str) -> Option<String> {
+    let window = web_sys::window()?;
+    let storage = window.local_storage().ok()??;
+    storage.get_item(key).ok().flatten()
+}
+
+/// Writes a value to localStorage (best-effort).
+fn storage_set(key: &str, value: &str) {
+    if let Some(window) = web_sys::window() {
+        if let Ok(Some(storage)) = window.local_storage() {
+            let _ = storage.set_item(key, value);
+        }
+    }
 }
 
 

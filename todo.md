@@ -51,6 +51,9 @@ shared verbatim by the WASM and desktop editions and unit-testable on the host.
 - [x] Sample data button (cabinet job: sides, shelves, rails, stiles) + Clear button
 - [x] Styling pass: self-contained injected stylesheet scoped to `.cutlist-app` (neutral light/dark via `prefers-color-scheme`, no external CSS deps; the DOM backend applies `class` verbatim and ignores custom attrs, so elements hook by class)
 - [x] Onboarding & UX pass: "How it works" guide (open by default; covers line format, kerf, materials, printing, privacy; toggled from the header), one-click example jobs (free: cabinet/shelving/fence rails; pro adds two-material and limited-stock examples), live counters under the textareas (sizes/pieces/total mm while typing; stock sizes + materials + capped bars), four stat cards (bars / utilization / offcut / cost or stock), and a per-bar color legend mapping segment swatches to part names
+- [x] Automation & convenience: Ctrl+Enter runs the optimizer from anywhere; the last job is restored on relaunch (kept on-device); loading an example fills the fields **and** optimizes immediately; placement table exports to CSV (both editions); per-bar legends appear on the print sheet automatically
+- [x] Offcut bank (Pro): "Save offcuts as stock" appends every leftover ≥ 150 mm back into the stock lines (`1234 x 1 @material`), so the next job reuses real offcuts instead of fresh stock
+- [x] Edition-split input caps: 2,000 part lines free / 10,000 Pro
 
 ## Phase 3 — Paid desktop edition (cargo feature `pro`)
 - [x] `pro` feature gates the improvement optimizer through `tpt-cutlist-solver/improvement` (200 ms budget); the free build compiles it out entirely

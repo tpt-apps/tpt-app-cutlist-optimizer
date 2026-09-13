@@ -13,8 +13,12 @@
 //! Errors are collected per line (all reported at once, with line numbers)
 //! so the UI can show a complete inline error list instead of one at a time.
 
-/// Free-tier guard: keeps a pasted 100k-line file from freezing the tab.
+/// Input guard: keeps a pasted 100k-line file from freezing the tab
+/// (2,000 lines on the free edition, 10,000 on Pro).
+#[cfg(not(feature = "pro"))]
 pub const MAX_PART_LINES: usize = 2000;
+#[cfg(feature = "pro")]
+pub const MAX_PART_LINES: usize = 10000;
 
 /// One user-facing validation issue, tied to a line of the textarea
 /// (`line` is 1-based; `None` for whole-form issues).
@@ -56,7 +60,9 @@ pub fn parse_parts(text: &str) -> Result<Vec<ParsedPart>, Vec<Issue>> {
         if parts.len() >= MAX_PART_LINES {
             issues.push(Issue {
                 line: None,
-                message: format!("free edition handles up to {MAX_PART_LINES} part lines per job"),
+                message: format!(
+                    "this edition handles up to {MAX_PART_LINES} part lines per job"
+                ),
             });
             break;
         }

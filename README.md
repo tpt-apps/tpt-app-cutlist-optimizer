@@ -127,6 +127,10 @@ features, so the improvement pass is compiled out entirely.
 | cost objective (per-bar price)    | implicit (length) | yes, shown in the summary  |
 | saved stock sets                  | —           | yes (localStorage/WebView2)      |
 | print-ready shop-floor layout     | —           | yes (`window.print()` sheet)     |
+| CSV export of the cut list        | yes         | yes                              |
+| offcut bank (reuse leftovers)     | —           | yes (≥150 mm offcuts → stock)    |
+| job restored on relaunch          | yes         | yes                              |
+| Ctrl+Enter to optimize            | yes         | yes                              |
 
 ## Pro input format
 

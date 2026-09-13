@@ -41,6 +41,9 @@ web-sys = { version = "0.3", features = [
     "HtmlInputElement",
     "HtmlTextAreaElement",
     "HtmlHeadElement",
+    "HtmlAnchorElement",
+    "EventTarget",
+    "KeyboardEvent",
 ] }
 console_error_panic_hook = "0.1"
 
