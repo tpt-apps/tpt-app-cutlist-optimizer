@@ -1,0 +1,13 @@
+[package]
+name = "tpt-cutlist-desktop"
+version = "0.1.0"
+edition = "2021"
+description = "TPT Cut List Optimizer Pro - desktop webview shell hosting the appfront DOM bundle."
+publish = false
+
+[[bin]]
+name = "tpt-cutlist-optimizer-pro"
+path = "src/main.rs"
+
+[dependencies]
+tpt-appfront-webview = { path = "D:/Programming/1PRODUCTION/Open Source/tpt-appfront/crates/tpt-appfront-webview" }

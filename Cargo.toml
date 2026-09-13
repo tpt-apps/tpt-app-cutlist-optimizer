@@ -1,0 +1,51 @@
+[package]
+name = "tpt-app-cutlist-optimizer"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[workspace]
+members = [".", "solver", "desktop"]
+resolver = "2"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[features]
+default = []
+# Pro edition (paid desktop build): enables the solver's improvement pass
+# (randomized restarts + local search). The free WASM build compiles without
+# it — `--no-default-features` is the default, `--features pro` is Pro.
+pro = ["tpt-cutlist-solver/improvement"]
+
+[dependencies]
+tpt-appfront-core = { path = "D:/Programming/1PRODUCTION/Open Source/tpt-appfront/crates/tpt-appfront-core" }
+tpt-appfront-dom = { path = "D:/Programming/1PRODUCTION/Open Source/tpt-appfront/crates/tpt-appfront-dom" }
+tpt-cutlist-solver = { path = "solver" }
+# Pinned to the installed wasm-bindgen CLI version — the CLI rejects wasm
+# built against a different schema version. Bump both together.
+wasm-bindgen = "=0.2.126"
+web-sys = { version = "0.3", features = [
+    "Document",
+    "Window",
+    "Element",
+    "Node",
+    "HtmlElement",
+    "HtmlInputElement",
+    "HtmlTextAreaElement",
+    "HtmlHeadElement",
+] }
+console_error_panic_hook = "0.1"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+
+# The desktop shell is a native binary; keep its codegen normal even in the
+# same workspace (the `release` profile above applies to the wasm lib build).
+[profile.release.package.tpt-cutlist-desktop]
+opt-level = 3
+

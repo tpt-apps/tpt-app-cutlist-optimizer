@@ -1,0 +1,21 @@
+[package]
+name = "tpt-cutlist-solver"
+version = "0.1.0"
+edition = "2021"
+description = "Kerf-aware 1D cut list optimizer (best-fit-decreasing baseline, optional improvement search and exact solver). Pure Rust, no UI deps."
+publish = false
+
+[features]
+# `std` (default) enables the wall-clock deadline in `ImproveOptions`.
+# Everything else is alloc-only and UI-dep-free, so the crate stays
+# testable on the host and shareable between the WASM and desktop builds.
+default = ["std"]
+std = []
+# Repeated randomized restarts + local search. Compiled out of the free
+# edition; enabled by the app crate's `pro` feature.
+improvement = []
+# Exact minimum-bar solver (branch and bound) for benchmarking the heuristics.
+exact = []
+
+[dev-dependencies]
+proptest = "1"
