@@ -71,3 +71,23 @@ shared verbatim by the WASM and desktop editions and unit-testable on the host.
 - [ ] Registry entry `status: 'live'` with `wasm: { entry: '/apps/cutlist-optimizer/cutlist-optimizer.js' }` (web-repo side)
 - [ ] Verify hub card, detail page, sitemap entry, and runner load in dev; verify prod build after deploy (web-repo side; set `TPT_WEB_REPO` and run `build.ps1` to stage the bundle)
 - [ ] Cross-link from relevant construction calculators on fieldservice + llms.txt mention (web-repo side)
+
+## Phase 5 — Polish, adoption & roadmap (backlog)
+
+Adoption / reach:
+- [ ] Shareable permalinks — encode the job in the URL hash (`#/j=…`), so every shared link lands a new user on a pre-filled, already-solved job (biggest free adoption funnel)
+- [ ] Imperial units toggle (mm ↔ inches) for US/global adoption — thread a unit factor through the UI + parser formatting (solver stays integer mm internally)
+- [ ] CSV import — mirror of the CSV export for spreadsheet-first users (paste or upload a CSV of parts)
+- [ ] Kerf calibration wizard — "cut twice, measure the gap" flow that solves for the real kerf instead of asking users to guess
+
+Export / workflow:
+- [ ] SVG (or PNG) export of the bar diagrams — vector output for quotes, invoices and emails
+- [ ] Project files — save/load the whole job as `.cutlist.json` from disk (desktop), enabling save-then-quote workflows
+- [ ] Cutting sequence report — ordered saw-ops list per bar ("cut at 730, then 1290, …") as a printable sheet
+- [ ] Tooltips on cut segments (hover shows the piece label; needs `title`/`aria-label` support in appfront-dom for arbitrary nodes)
+
+Solver / UX refinements:
+- [ ] Configurable offcut-bank threshold (currently fixed at 150 mm) + an "offcut inventory" view listing what is banked
+- [ ] Grain-direction / end-grain notes per part (constraint metadata carried through to the diagram and print sheet)
+- [ ] e2e smoke tests through `tpt-appfront-mcp` — mount the real DOM app, click an example, assert bars + stats render (guards the whole UI, not just the parser/solver)
+- [ ] Upgrade nudge metrics: count optimizations per device and show the Pro nudge after N jobs instead of immediately (softer funnel)
