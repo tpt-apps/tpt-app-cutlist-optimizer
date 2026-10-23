@@ -7,7 +7,7 @@ woodworkers. Two editions ship from this one repo:
   `tptsolutions.co.nz/tools/cutlist-optimizer` (registry slug
   `cutlist-optimizer`, category `construction`). Single stock length,
   deterministic best-fit-decreasing packing.
-- **Pro desktop edition** ($49, Gumroad) — the same UI built with
+- **Pro desktop edition** ($99, Gumroad) — the same UI built with
   `--features pro`, which compiles the solver's improvement search in, hosted
   in a native webview shell (`desktop/`) as a Windows exe.
 
