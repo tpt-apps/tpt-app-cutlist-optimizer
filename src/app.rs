@@ -163,7 +163,7 @@ enum Msg {
 }
 
 const BASE_CSS: &str = r#"
-.cutlist-app{--cl-bg:#ffffff;--cl-panel:#f6f7f9;--cl-fg:#1f2430;--cl-muted:#667085;--cl-border:#d9dee7;--cl-accent:#0e7c6b;--cl-accent-fg:#ffffff;--cl-err:#b3261e;--cl-err-bg:#fbeeec;--cl-track:#e4e8ef;--cl-waste:#c9ced9;max-width:880px;color:var(--cl-fg);font-size:15px;line-height:1.5}
+.cutlist-app{--cl-bg:#ffffff;--cl-panel:#f6f7f9;--cl-fg:#1f2430;--cl-muted:#667085;--cl-border:#d9dee7;--cl-accent:#0e7c6b;--cl-accent-fg:#ffffff;--cl-err:#b3261e;--cl-err-bg:#fbeeec;--cl-track:#e4e8ef;--cl-waste:#c9ced9;max-width:880px;color:var(--cl-fg);font-family:system-ui,'Segoe UI',sans-serif;font-size:15px;line-height:1.5}
 @media(prefers-color-scheme:dark){.cutlist-app{--cl-bg:#10151f;--cl-panel:#161d2a;--cl-fg:#e6e9ef;--cl-muted:#98a2b3;--cl-border:#2a3342;--cl-accent:#34b39a;--cl-accent-fg:#0b1f1a;--cl-err:#f2b8b5;--cl-err-bg:#2c1a1c;--cl-track:#1d2634;--cl-waste:#39445a}}
 .cutlist-app *{box-sizing:border-box}
 .cutlist-app h2{font-size:1.3rem;margin:0 0 2px}
@@ -184,7 +184,7 @@ const BASE_CSS: &str = r#"
 .cutlist-results-view{margin:4px 0 14px}
 .cutlist-summary{margin:0 0 10px}
 .cutlist-headline{font-weight:700;font-size:1.02rem;margin:0 0 2px}
-.cutlist-detail,.cutlist-engine{color:var(--cl-muted);font-size:.85rem;margin:0}
+.cutlist-detail,.cutlist-engine{display:block;color:var(--cl-muted);font-size:.85rem;margin:0}
 .cutlist-issues{margin:0 0 12px;padding:10px 12px;background:var(--cl-err-bg);border:1px solid var(--cl-err);border-radius:8px}
 .cutlist-issue{color:var(--cl-err);font-size:.88rem;margin:2px 0}
 .cutlist-bar{margin:0 0 12px}
@@ -213,8 +213,8 @@ const BASE_CSS: &str = r#"
 .cutlist-divider{border-top:1px solid var(--cl-border);margin:14px 0 12px}
 .cutlist-stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;margin:0 0 12px}
 .cutlist-stat{background:var(--cl-panel);border:1px solid var(--cl-border);border-radius:8px;padding:8px 10px}
-.cutlist-stat-value{font-weight:700;font-size:1.15rem;margin:0}
-.cutlist-stat-label{color:var(--cl-muted);font-size:.75rem;margin:0}
+.cutlist-stat-value{display:block;font-weight:700;font-size:1.15rem;margin:0}
+.cutlist-stat-label{display:block;color:var(--cl-muted);font-size:.75rem;margin:0}
 .cutlist-legend{display:flex;gap:10px;flex-wrap:wrap;margin-top:4px}
 .cutlist-legend-item{display:flex;gap:5px;align-items:center}
 .cutlist-swatch{width:12px;height:12px;border-radius:3px;flex:none}
@@ -224,7 +224,7 @@ const BASE_CSS: &str = r#"
 .cutlist-thresh{width:70px}
 .cutlist-help{display:none;background:var(--cl-panel);border:1px solid var(--cl-border);border-radius:10px;padding:12px 16px;margin:0 0 14px}
 .cutlist-help.cutlist-open{display:block}
-.cutlist-help p{margin:6px 0;font-size:.9rem}
+.cutlist-help p,.cutlist-help-p{display:block;margin:6px 0;font-size:.9rem}
 @media print{
 .cutlist-no-print{display:none!important}
 .cutlist-help-root{display:none!important}
@@ -1263,8 +1263,8 @@ fn results_view(
                 }
             };
             summary.text(headline).class("cutlist-headline");
-            summary.text(detail).class("cutlist-detail");
-            summary.text(ENGINE_NOTE).class("cutlist-engine");
+            summary.container(|t| { t.text(detail); }).class("cutlist-detail");
+            summary.container(|t| { t.text(ENGINE_NOTE); }).class("cutlist-engine");
         })
         .class("cutlist-summary");
 
@@ -1314,8 +1314,8 @@ fn results_view(
                 (fourth_label.as_str(), fourth_value),
             ] {
                 stats.container(|stat| {
-                    stat.text(value).class("cutlist-stat-value");
-                    stat.text(label).class("cutlist-stat-label");
+                    stat.container(|t| { t.text(value); }).class("cutlist-stat-value");
+                    stat.container(|t| { t.text(label); }).class("cutlist-stat-label");
                 })
                 .class("cutlist-stat");
             }
@@ -1979,58 +1979,51 @@ fn help_view(open: Signal<bool>) -> UITree<Msg> {
     root_builder
         .container(|c| {
             c.heading(3, "How it works");
-            c.text(
+            c.container(|t| { t.text(
                 "1 \u{b7} Parts — one piece type per line: `length x quantity label`. \
                  `600 x 3 Shelf` means three 600 shelves. Past CSV rows (`600, 3, Shelf`) \
                  parse fine, `#` lines are comments, and duplicate lines merge their \
                  quantities. Add `!grain` to note that grain runs along the part \
                  (shown in the table and print sheet).",
-            )
-            .class("cutlist-help-p");
+            ); }).class("cutlist-help-p");
             #[cfg(feature = "pro")]
-            c.text(
+            c.container(|t| { t.text(
                 "Materials — tag a part with @name (`600 x 2 Shelf @ply`) and add one stock \
                  line per stock: `2400 x 4 @ply` means 2400 stock, at most 4 bars. A part \
                  is only ever cut from its own material, and pieces that fit no stock of \
                  that material are flagged before optimizing.",
-            )
-            .class("cutlist-help-p");
-            c.text(
+            ); }).class("cutlist-help-p");
+            c.container(|t| { t.text(
                 "2 \u{b7} Stock & blade — the stock length is the board you cut from. Kerf is \
                  the blade width lost to every cut (about 3 for a circular saw, 4\u{2013}5 \
                  for a track saw) — use \u{201c}Calibrate kerf\u{201d} to measure yours. The \
                  Units selector switches everything between millimetres and inches. The \
                  optimizer charges kerf between cuts, so the packing is real-world accurate.",
-            )
-            .class("cutlist-help-p");
-            c.text(
+            ); }).class("cutlist-help-p");
+            c.container(|t| { t.text(
                 "3 \u{b7} Optimize — every piece is packed onto bars, drawn to scale, with exact \
                  cut positions in the table, an ordered cutting sequence per bar, and an \
                  offcut inventory. \u{201c}Copy share link\u{201d} puts the whole job in the URL, \
                  so a link opens on someone else's device already filled in and solved. \
                  \u{201c}Save job\u{201d} writes a .cutlist.json file you can reopen (or share); \
                  \u{201c}Import CSV\u{201d} reads length,qty,label spreadsheets.",
-            )
-            .class("cutlist-help-p");
+            ); }).class("cutlist-help-p");
             #[cfg(feature = "pro")]
-            c.text(
+            c.container(|t| { t.text(
                 "Printing — the Print layout button opens a shop-floor sheet with the diagrams, \
                  cutting sequence and cut positions, ready to take to the saw. Saved stock sets \
                  let you store your stock lengths once and reload them any time (kept on this \
                  device), and \u{201c}Save offcuts as stock\u{201d} banks leftovers over the \
                  threshold for the next job.",
-            )
-            .class("cutlist-help-p");
-            c.text(
+            ); }).class("cutlist-help-p");
+            c.container(|t| { t.text(
                 "Everything runs locally — your cut list never leaves this device.",
-            )
-            .class("cutlist-help-p");
-            c.text(format!(
+            ); }).class("cutlist-help-p");
+            c.container(|t| { t.text(format!(
                 "Cut List Optimizer v{} \u{b7} free edition: one stock length, fast packing. \
                  Pro adds multiple materials, the improved search, saved stock sets and printing.",
                 env!("CARGO_PKG_VERSION")
-            ))
-            .class("cutlist-engine");
+            )); }).class("cutlist-engine");
         })
         .class(if open {
             "cutlist-help cutlist-open"
@@ -2109,7 +2102,7 @@ fn print_view(results: Signal<Outcome>, units: Signal<Units>) -> UITree<Msg> {
                     .iter()
                     .map(|bar| u64::from(stocks[bar.stock_index].length))
                     .sum();
-                c.text(format!(
+                c.container(|t| { t.text(format!(
                     "{} bar{} \u{b7} {} stock \u{b7} {} parts \u{b7} {} offcut \u{b7} kerf {}",
                     solution.bar_count(),
                     if solution.bar_count() == 1 { "" } else { "s" },
@@ -2117,12 +2110,10 @@ fn print_view(results: Signal<Outcome>, units: Signal<Units>) -> UITree<Msg> {
                     fmt_len_u64(solution.parts_length() as u64, units_now),
                     fmt_len_u64(solution.waste as u64, units_now),
                     fmt_len(*kerf, units_now)
-                ))
-                .class("cutlist-detail");
-                c.text(ENGINE_NOTE).class("cutlist-engine");
+                )); }).class("cutlist-detail");
+                c.container(|t| { t.text(ENGINE_NOTE); }).class("cutlist-engine");
             } else {
-                c.text("Optimize a job first — the print layout mirrors the results.")
-                    .class("cutlist-engine");
+                c.container(|t| { t.text("Optimize a job first — the print layout mirrors the results."); }).class("cutlist-engine");
                 c.text("");
             }
 
