@@ -3,7 +3,7 @@
 > Hub listing: `tptsolutions.co.nz/tools/cutlist-optimizer` (registry slug
 > `cutlist-optimizer`, category `construction`). Spec: `apps.md` §T1-7 in the
 > tpt-electrician-nz-2 repo. Free WASM edition runs in-browser; the paid
-> offline edition ($49 USD, Gumroad) adds multi-sheet/multi-material
+> offline edition ($99 USD, Gumroad) adds multi-sheet/multi-material
 > optimization, saved material libraries, and print-ready shop-floor layout
 > export. UI built on `tpt-appfront` (DOM backend for the hub, webview for
 > the desktop exe).
@@ -67,7 +67,7 @@ shared verbatim by the WASM and desktop editions and unit-testable on the host.
 - [ ] Material library persisted to a JSON file **next to the exe** (currently profile storage; needs a request/response IPC addition to appfront-webview — app commands are fire-and-forget today)
 - [x] Desktop shell via `tpt-appfront-webview` (wry/tao) hosting the same DOM bundle: `desktop/` bin (`tpt-cutlist-optimizer-pro`) serves `dist/` (dist resolution: `TPT_CUTLIST_DIST` → `./dist` → exe-adjacent); `build.ps1 -Pro` = pro wasm + `trunk build --release --features pro` + exe
 - [x] Windows exe build verified: `target/release/tpt-cutlist-optimizer-pro.exe` compiles and exits with a clear message when `dist/index.html` is missing. (Interactive smoke test — open window, run sample job, check the Pro engine note, print — still to do in a desktop session)
-- [ ] Gumroad: create product from apps.md listing copy ($49), upload exe, paste URL into `gumroadUrl` in the hub registry
+- [x] Gumroad: product live at https://tpt12.gumroad.com/l/tpt-cutlist-optimizer ($99); URL and price added to the hub registry (`gumroadUrl`, `price`)
 
 ## Phase 4 — Ship & measure
 - [x] WASM payload size check (build.ps1 reports it every run): free **75.7 KB gz**, pro **98.7 KB gz** — far under the ~400 KB first-load target
