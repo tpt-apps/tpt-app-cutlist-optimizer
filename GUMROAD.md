@@ -1,5 +1,7 @@
 # Gumroad listing
 
+**Live listing:** https://tpt12.gumroad.com/l/tpt-cutlist-optimizer
+
 Everything needed to create/update the Gumroad product. Source copy is
 `apps.md` §T1-7 in the `tpt-electrician-nz-2` repo — if that changes, update
 here too (and vice versa).
